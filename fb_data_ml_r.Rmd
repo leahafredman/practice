@@ -1,0 +1,844 @@
+---
+title: "Playing_w_fb_data"
+author: "aria_fredman"
+date: "2/14/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+I'm starting by setting my working directory to where my data is saved
+The data are from a FB advertising campaign 
+and importing the tidyverse libraries
+```{r}
+setwd("~/Desktop/aria_fredman2")
+library("tidyverse")
+```
+
+Reading my data into R
+```{r}
+fb_df <- read_csv("facebook_ad_campaign.csv")
+```
+
+examining the data
+looking at the first 5 rows with the head function
+```{r}
+head(fb_df)
+```
+According to Kaggle (where the data are from):
+1) ad_id: each ad has a unique ID
+2) xyz_campaign_id: an ID associated with each ad campaign of XYZ company.
+3) fb_campaign_id: an ID associated with how Facebook tracks each campaign.
+4) age: age of the person who saw the ad
+5) gender: gender of the person who saw ad
+6) interest: a code specifying the category to which the person’s interest belongs 
+(interests are as mentioned in the person’s Facebook public profile)
+7) Impressions: number of times the ad was shown.
+8) Clicks: number of clicks on for that ad.
+9) Spent: Amount paid by company xyz to Facebook, to show that ad.
+10) Total conversion: Total number of people who enquired about the product after seeing the ad.
+11) Approved conversion: Total number of people who bought the product after seeing the ad.
+
+Before cleaning and official EDA
+I want to clarify to myself the relationship between ad_id, xyz_campaign_id, and fb_campaign_id
+And now that I wrote all that out I see that I want to shorten those last 2 column names too
+I'll start with that
+and then look for unique values count for each as a first step
+``` {r}
+fb_df <-
+  fb_df %>%
+  rename(xyz_camp = xyz_campaign_id, fb_camp = fb_campaign_id)
+
+colnames(fb_df)
+
+fb_df %>%
+  select(ad_id, xyz_camp, fb_camp) %>%
+  summarise_all(n_distinct)
+
+unique(fb_df$xyz_camp)
+```
+I think since there are so few campaigns in xyz but so many in fb, 
+for this exercize I'm going to focus on xyz.
+I'm curious about whether there are distinct ads in each campaign,
+or there is an overlap,
+and if so to what extent
+
+This aggregates how many unique ads in each campaign
+This can be done in both these ways
+I gravitate towards the second
+```{r}
+
+fb_df %>%
+  select(xyz_camp, ad_id)  %>%
+  mutate(xyz_camp = as.factor((xyz_camp)))%>%
+  group_by(xyz_camp) %>%
+  pivot_wider(names_from = xyz_camp, values_from = ad_id
+              , values_fn = list(ad_id = length) #This is an aggregarion function for how many ads in each campaign type
+              )
+fb_df %>%
+  select(xyz_camp, ad_id)  %>%
+  mutate(xyz_camp = as.factor((xyz_camp)))%>%
+  group_by(xyz_camp) %>%
+  count()
+
+```
+
+I wanted a table where the campaign types were the column names
+and the values were the ad types.
+Because there are duplicate ad types for each campaign I was getting an error trying to use only pivot
+The workaround was to add another column where the values were the row numbers, 
+so that each row has a unique identifyer,
+and then dropping it at the end
+```{r}
+fb_df %>%
+  select(xyz_camp, ad_id)  %>%
+  distinct() %>%
+  mutate(campaign = as.factor(glue::glue("camp_{xyz_camp}"))) %>% #renaming camp numbers, so that they're easier to work with a column names later
+  select(-xyz_camp) %>%
+  group_by(campaign) %>%
+  mutate(row = row_number()) %>%
+  pivot_wider(names_from = campaign, 
+              values_from = ad_id, 
+              values_fill = list(ad_id = 0)) %>%
+  select(-row) %>%
+  arrange(desc(camp_916, camp_936, camp_1178))
+```
+That's actually not as informative as I wanted it to be
+I think what I want to make each of these a separate dataframe
+and then semi join every two pairs
+
+```{r}
+
+#Campaign column names  
+
+column_names <- 
+  pull(unique(
+    fb_df %>%
+      select(xyz_camp, ad_id) %>%
+      distinct() %>%
+      mutate(campaign = as.factor(glue::glue("camp_{xyz_camp}"))) %>%
+      select(campaign)))
+
+column_campaign_fun <- function(num){
+  fb_df %>%
+    select(xyz_camp, ad_id)  %>%
+    distinct() %>%
+    mutate(campaign = as.factor(glue::glue("camp_{xyz_camp}"))) %>% #renaming camp numbers, so that they're easier to work with a column names later
+    select(-xyz_camp) %>%
+    group_by(campaign) %>%
+    mutate(row = row_number()) %>%
+    pivot_wider(names_from = campaign, 
+                values_from = ad_id, 
+                values_fill = list(ad_id = 0)) %>%
+    select(-row) %>%
+    select({num})}
+
+assign((glue::glue("column_{toString(column_names[1])}")), column_campaign_fun(1))
+assign((glue::glue("column_{toString(column_names[2])}")), column_campaign_fun(2))
+assign((glue::glue("column_{toString(column_names[3])}")), column_campaign_fun(3))
+
+for(i in 1:length(column_names)){
+  print(glue::glue("column_{toString(column_names[i])}"))
+  }
+#column_camp_916
+#column_camp_936
+#column_camp_1178
+colnames(column_camp_916)
+colnames(column_camp_936)
+colnames(column_camp_1178)
+
+#overlap of distinct values that aren't NA
+#which I've previously coded as 0
+semi_join(
+  (column_camp_916 %>% distinct() %>% filter(camp_916 > 0)), 
+  (column_camp_936 %>% distinct() %>% filter(camp_936 > 0)), 
+  by = c("camp_916" = "camp_936")
+  ) %>% count() #0
+
+semi_join(
+  (column_camp_936 %>% distinct() %>% filter(camp_936 > 0)), 
+  (column_camp_916 %>% distinct() %>% filter(camp_916 > 0)), 
+  by = c("camp_936" = "camp_916")
+  ) %>% count() #0
+
+semi_join(
+  (column_camp_916 %>% distinct() %>% filter(camp_916 > 0)), 
+  (column_camp_1178 %>% distinct() %>% filter(camp_1178 > 0)), 
+  by = c("camp_916" = "camp_1178")
+  ) %>% count() #0
+
+semi_join(
+  (column_camp_1178 %>% distinct() %>% filter(camp_1178 > 0)), 
+  (column_camp_916 %>% distinct() %>% filter(camp_916 > 0)), 
+  by = c("camp_1178" = "camp_916")
+  ) %>% count() #0
+
+semi_join(
+  (column_camp_936 %>% distinct() %>% filter(camp_936 > 0)), 
+  (column_camp_1178 %>% distinct() %>% filter(camp_1178 > 0)), 
+  by = c("camp_936" = "camp_1178")
+  ) %>% count() #0
+
+semi_join(
+  (column_camp_1178 %>% distinct() %>% filter(camp_1178 > 0)), 
+  (column_camp_936 %>% distinct() %>% filter(camp_936 > 0)), 
+  by = c("camp_1178" = "camp_936")
+  ) %>% count() #0
+
+
+column_camp_936 %>% 
+  distinct() %>% 
+  filter(camp_936 > 0 & 
+           (!camp_936 %in% 
+              (column_camp_916 %>% 
+                 distinct() %>% 
+                 filter(camp_916 > 0))) &
+           (!camp_936 %in%
+              (column_camp_1178 %>% 
+                 distinct() %>% 
+                 filter(camp_1178 > 0)))
+           ) %>%
+  count()
+column_camp_936 %>% distinct() %>% filter(camp_936 > 0)  %>% count()
+
+
+column_camp_916 %>% 
+  distinct() %>% 
+  filter(camp_916 > 0 & 
+           (!camp_916 %in% 
+              (column_camp_936 %>% 
+                 distinct() %>% 
+                 filter(camp_936 > 0))) &
+           (!camp_916 %in%
+              (column_camp_1178 %>% 
+                 distinct() %>% 
+                 filter(camp_1178 > 0)))
+           ) %>%
+  count()
+column_camp_916 %>% distinct() %>% filter(camp_916 > 0) %>% count()
+
+column_camp_1178 %>% 
+  distinct() %>% 
+  filter(camp_1178 > 0 & 
+           (!camp_1178 %in% 
+              (column_camp_936 %>% 
+                 distinct() %>% 
+                 filter(camp_936 > 0))) &
+           (!camp_1178 %in%
+              (column_camp_916 %>% 
+                 distinct() %>% 
+                 filter(camp_916 > 0)))
+           ) %>%
+  count()
+column_camp_1178 %>% distinct() %>% filter(camp_1178 > 0)  %>% count()
+
+fb_df %>% group_by(xyz_camp) %>% select(xyz_camp, ad_id) %>% summarize(n = n(), n_distinct = n_distinct(ad_id))
+```
+So it seems like there is no overlap
+between ads in the differnt campaigns
+Also each ad appears only one in each group,
+because the count is the same whether they're distinct or not.
+If each ad is a completely different ad, 
+then there are over 1k ads,
+which I don't think really makes much sense.
+So I don't think the ad_id is a unique ID for each ad that's different.
+It's also not that each row is an aggregate for that ID,
+because then you couldn't have something that specific in terms of age or sex.
+I think that each row is supposed to represent a single person,
+and also maybe that the ad_id is kind of like a person id in a way?
+
+
+Back to data cleaning
+First thing that comes to mind in terms of data cleaning is standardizing variable names so all are lowercase
+```{r}
+colnames(fb_df) <- 
+  tolower(colnames(fb_df))
+
+colnames(fb_df)
+```
+
+I'm going to use the DataExplorer package to start my EDA (exploratory data analysis)
+I came across it in this great Kaggle notebook:
+https://www.kaggle.com/chrisbow/an-introduction-to-facebook-ad-analysis-using-r/data
+```{r}
+library(DataExplorer)
+```
+
+One thing that is unclear to me is whether each row represents a single person.
+If that's not the case, this is problematic,
+because if you come to a conclusion that a group with certain characteristics is most likely to convert,
+but that group is mostly made up of a single person, 
+then you really only learned something mostly about that person
+and not the group that they're part of.
+Therefore, without knowing if it's one row per person,
+we can't really draw any generalized conclusions.
+However, for the purpose of this exercize, 
+I will assume that each row represents a unique FBer
+
+A quick look at the columns
+```{r}
+str(fb_df)
+```
+It looks like age and gender are characters, 
+so we'll want to change that for modelling perposes 
+I first want to figure out what all the unique levels of those variables are
+```{r}
+#Two ways to do it
+#First is dplyr, and a little longer
+#it can be shortened but I like the readability of this
+fb_df %>%
+  select(age) %>%
+  distinct
+fb_df %>%
+  select(gender) %>%
+  distinct
+
+unique(fb_df$gender)
+unique(fb_df$age)
+```
+Because I'm going to use these as features in an algorithm
+I need to have only dichotomous options for each column.
+Gender only has two option here, 
+but age has more.
+One way to deal with this would be to find the mean of each age group
+and then make that a continuous, integer variable.
+But I don't love that idea, because it's pretending someone is a specific age
+when we know for a fact that they are just somewhere in the range.
+The range is small so it's probably not a big deal,
+but rather than introducing what I know is noisier data
+I am going to make 4 columns out of this single column,
+and for each column there will be only two options for input:
+whether the person was in that age range, or not.
+1 means the person was in the group,
+and 0 that they were not.
+I also want to change the column names
+so that they're not just numbers,
+and I'll do that first so that it pivots the table
+into the exact table that I want
+```{r}
+unique(fb_df$age)
+
+dich_fun <-
+  function(x, na.rm = FALSE){
+    ifelse(x == 0, 0, 1)
+  }
+
+fb_df <-
+  fb_df %>%
+  mutate(age = ifelse(age == "30-34", "age_range_30_34", ifelse(
+    age == "35-39", "age_range_35_39", ifelse(
+      age == "40-44", "age_range_40_44", "age_range_45_49"))),
+    age1 = age) %>%
+  pivot_wider(names_from = age1,
+              values_from = age1,
+              values_fill = list(age1 = 0)) %>%
+#The pivot is filling in the values with the names of variables,
+  #but I want it to be an integer
+  #so switching those to 1
+  mutate_at(c("age_range_30_34", "age_range_35_39", "age_range_40_44", "age_range_45_49"), dich_fun)
+```
+The truth is that if I know someone isn't in the 1st three age groups
+that they'll be in the last
+so I need to dump one of the age groups.
+I also want to make the gender variable numeric
+where female = 1 and male = 0
+```{r}
+fb_df <- 
+  fb_df %>%
+  mutate(gender = ifelse(gender == "F", 1, 0))
+  
+```
+
+Since there are 3 distinct campaigns
+I think using the campaign may be an interesting feature,
+depending on what we're trying to accomplish,
+so I'll dicotomize those 
+like I did with the age ranges
+``` {r}
+unique(fb_df$xyz_camp)
+
+fb_df <-
+  fb_df %>%
+  mutate(xyz_camp = ifelse(xyz_camp == 916, "xyz_camp_916", ifelse(
+    xyz_camp == 936, "xyz_camp_936", "xyz_camp_1178")),
+    xyz_camp1 = xyz_camp) %>%
+  pivot_wider(names_from = xyz_camp1,
+              values_from = xyz_camp1,
+              values_fill = list(xyz_camp1 = 0)) %>%
+#The pivot is filling in the values with the names of variables,
+  #but I want it to be an integer
+  #so switching those to 1
+  mutate_at(c("xyz_camp_916", "xyz_camp_936", "xyz_camp_1178"), dich_fun)
+
+```
+
+Looking at first 20 rows of data
+```{r}
+head(fb_df, 20)
+```
+I'm going to engineer a ROAS feature where I'll assume a conversion is worth about $100,
+so the ROAS will be 100 / spent
+
+```{r}
+fb_df <-
+  fb_df %>%
+  mutate(roas = round((approved_conversion * 100) / spent, 2))
+
+```
+
+```{r}
+options(repr.plot.width=8, repr.plot.height=8)
+plot_bar(fb_df %>%
+           select(-age_range_30_34, 
+                  -age_range_35_39, 
+                  -age_range_40_44, 
+                  -age_range_45_49,
+                  -xyz_camp_916,
+                  -xyz_camp_936,
+                  -xyz_camp_1178))
+  
+```
+
+
+```{r}
+options(repr.plot.width=8, repr.plot.height=4)
+plot_histogram(fb_df)
+```
+
+The histogram reminds me that even though interest has number values,
+that they're factors.
+I need to fix that, as well as dichotomize the interests like I did with age, and campaign
+```{r}
+fb_df <-
+  fb_df %>% 
+  mutate(interest = as.factor(interest)) %>%
+  mutate(interest1 = as.character(glue::glue("interest_{interest}"))) %>%
+  pivot_wider(names_from = interest1,
+              values_from = interest1,
+              values_fill = list(interest1 = 0)) %>%
+  mutate_at(vars(matches("interest_")), dich_fun)
+```
+
+
+```{r}
+# plot_missing(fb_df %>% 
+#                select_at(
+#                  vars(-matches("interest_", 
+#                               "xyz_camp_", 
+#                                "age_"))))
+
+plot_missing(fb_df %>% 
+               select(-starts_with("interest_"), 
+                      -starts_with("xyz_camp_"), 
+                      -starts_with("age_")))
+
+
+fb_df %>%
+  select(roas) %>%
+  summarise(n_roas_na = sum(is.na(roas)), 
+            n_roas_na = sum(is.na(roas)), 
+            percent_roas_na = (sum(is.na(roas))) / n() * 100)
+
+```
+According to this I'm only missin data in ROAS.
+Let's look into that a little bit.
+Since ROAS is built from approved_conversion and spent,
+I'll look at those three features,
+and limit myself to the NAs
+```{r}
+fb_df %>%
+  filter(is.na(roas)) %>%
+  select(starts_with("appro"), spent, roas)
+
+```
+
+```{r}
+library(psych)
+
+
+fb_df_core <-
+  fb_df %>% 
+  select(-starts_with("interest_"), 
+         -starts_with("xyz_camp_"), 
+         -starts_with("age_"))
+
+psych::describe(fb_df_core)
+
+sapply(fb_df_core, class)
+
+str(fb_df_core)
+
+
+```
+
+I'm curious what the roas Inf rows are like
+```{r}
+fb_df_core %>%
+  filter(is.infinite(roas))
+```
+
+It looks like these rows may have some conversions 
+but no spent.
+I'm not sure how that could happen;
+maybe FB still showed an ad for their own reserach purposes?
+Although it also doesn't show that they clicked on the ad,
+so I'm not sure if FB just isn't sharing those data,
+or if something weirder is going on...
+```{r}
+fb_df_core %>%
+  filter(is.infinite(roas) &
+           (spent > 0 | approved_conversion == 0)
+              )
+```
+Anywho, I want to remove the infinites, NAs, and 0 spent.
+I'll be explicit about all those,
+but it seems from everything I've seen that handeling the final issue will redress the first two as well
+```{r}
+fb_df_core_roas <- 
+  fb_df_core %>%
+  filter(spent > 0 &
+           !is.infinite(roas) &
+           !is.na(roas)) %>%
+  select(-ad_id, -fb_camp)
+
+fb_df_features_roas <- 
+  fb_df %>%
+  filter(spent > 0 &
+           !is.infinite(roas) &
+           !is.na(roas)) %>%
+  select(-age, -xyz_camp, -interest)
+```
+
+Making sure this worked out as planned
+```{r}
+psych::describe(fb_df_core_roas)
+
+str(fb_df_core_roas)
+```
+I'm also interested in the tail ends of the distribution for variables
+like spent, where the median is ~$12, but the max is ~639!!!
+This also highlights how it's important to carefully consider what you want your outcome to be
+You might prioritise conversions if you know how frequently people are likely to come back to your store after converting once
+```{r}
+View(fb_df_core_roas %>%
+  mutate(roas_top_quant = ifelse(roas > quantile(roas, 0.9), 1, 0),
+         spent_top_quant = ifelse(spent > quantile(spent, 0.9), 1, 0),
+         appconv_top_quant = ifelse(approved_conversion > quantile(approved_conversion, 0.9), 1, 0)) %>%
+    arrange(desc(roas)))
+
+psych::describe(fb_df_core_roas %>% 
+                  select(roas,
+                         spent,
+                         approved_conversion))
+
+psych::describeBy((fb_df_core_roas %>% 
+                  select(roas,
+                         spent,
+                         approved_conversion))
+                  , fb_df_core_roas$xyz_camp)
+
+```
+It's really interesting to see how your success KPI will define which of the campaigns you thought was most successful
+It also really affects how extreme the outliers in different catagories are.
+
+The continuous variables are very skewed.
+Taking the log of them seems to help with normalization.
+This can be important both for statistics, 
+as well as machine learning.
+```{r}
+library(gridExtra)
+grid.arrange(qplot(impressions, data = fb_df_core_roas),
+             qplot(clicks, data = fb_df_core_roas),
+             qplot(spent, data = fb_df_core_roas),
+             qplot(approved_conversion, data = fb_df_core_roas),
+             qplot(roas, data = fb_df_core_roas),
+             nrow = 2,
+             ncol = 3)
+
+grid.arrange(grid.arrange(qplot(impressions, data = fb_df_core_roas),
+                          qplot(clicks, data = fb_df_core_roas),
+                          qplot(spent, data = fb_df_core_roas),
+                          qplot(approved_conversion, data = fb_df_core_roas),
+                          qplot(roas, data = fb_df_core_roas),
+                          nrow = 2,
+                          ncol = 3),
+             grid.arrange(qplot(log(impressions), data = fb_df_core_roas),
+                          qplot(log(clicks), data = fb_df_core_roas),
+                          qplot(log(spent), data = fb_df_core_roas),
+                          qplot(log(approved_conversion), data = fb_df_core_roas),
+                          qplot(log(roas), data = fb_df_core_roas),
+                          nrow = 2,
+                          ncol = 3),
+             nrow = 2)
+
+```
+For the dataframe that I made that I'll use for ML and statistics
+I'll want to log the continuousfeatures for that,
+and drop the ad_ids
+```{r}
+log_fun <- function(x){
+  log(x + 1)
+}
+
+fb_df_features_roas <-
+  fb_df_features_roas %>% 
+  select(-ad_id, -fb_camp, -starts_with("xyz")) %>%
+  mutate_at(vars("spent", "clicks", "impressions", "approved_conversion", "roas"), log_fun)
+  
+```
+
+
+Using approved roas as my outcome to constuct a snakey plot
+```{r}
+library(ggalluvial)
+fb_snake_plt_fun <- 
+  function(df){
+    ggplot(df,
+           aes(
+             y = roas,
+             #axis1 is variable closest to the outcome
+             #axisN is the one furthest away from it
+             axis1 = interest,
+             axis2 = age,
+             axis3 = gender) ) +
+      scale_x_discrete(limits = c('gender', 'age', 'interest')) +
+      # I've added a colour gradient to the links 
+      geom_flow( aes( fill= age) ) +
+      geom_stratum(width = 1/4, fill = "white", color = "black") + #adds boxes for the labels on the plot
+      geom_text( stat='stratum', infer.label=TRUE ) +
+      theme( legend.position='none' )
+  }
+
+grid.arrange(fb_snake_plt_fun(fb_df_core_roas), 
+             fb_snake_plt_fun(fb_df_core_roas %>% 
+                                filter(xyz_camp == "xyz_camp_1178")), 
+             nrow = 2)
+
+grid.arrange(fb_snake_plt_fun(fb_df_core_roas), 
+             fb_snake_plt_fun(fb_df_core_roas %>% 
+                                filter(xyz_camp == "xyz_camp_916")),
+             nrow = 2)
+
+grid.arrange(fb_snake_plt_fun(fb_df_core_roas), 
+             fb_snake_plt_fun(fb_df_core_roas %>% 
+                                filter(xyz_camp == "xyz_camp_936")), 
+             nrow = 2)
+
+
+```
+
+You can see from the above plots how important it is to understand what, exactly, you want to look at.
+Without knowing the difference between the xyz campaigns,
+I can't know what I'm attributing the differences I see in the graph to.
+I also can't know if I can put those data together and analyze them as one.
+However, for this exercize I will assume that I can, because I want more data,
+but IRL this would not fly.
+
+```{r}
+fb_snake_plt_fun(fb_df_core_roas)
+```
+It seems like some of the ages, and some of the interests, and men account for larger portions of the ROAS
+But it's hard to know if it's significant to the extent that we'd want to act on it without statistics
+```{r}
+library(corrgram)
+corrgram((fb_df_features_roas %>%
+            select(-starts_with("interest"))),
+         upper.panel = panel.pie, 
+         lower.panel = panel.pts)
+```
+
+In a correlation all we can see is the predictive relationship between two variables. 
+One of these variables might cause the other (but we can't tell which), 
+or a third variable may cause both of these, which is why the occur together 
+(e.g. time caused a decline in pirates and an increase in global warming; 
+I don't think that less pirates led to global warming, and that encouraging people to go into piracy can decrease global warming). 
+So correlation may be indicative of causation, but is not necessarily so.
+A stronger correlation is closer to 1 (positive relationship) or -1 (negative relationship), 
+and the closer you are to 0, 
+the less of a correlation there is, 
+and at some point it is statistically insignificant (but what does that even mean?!).
+However, even if there is some sort of causal relationship between two variables, 
+if you only have a partial model, 
+and don't have all the important predictors in it, 
+you cannot know the true nature of the relationship, 
+and what you see may be deceiving.
+I don't expect the relationship between conversions and clicks/impressions to be exactly
+as the relationship with those outcomes and ROAS, because the latter is also inversely dependent
+on spent. 
+However, overall, a bigger ROAS is somewhat dependent on a bigger conversion,
+so I don't expect it to really be negatively correlated with those outcomes.
+You can have a big ROAS though with a big coversion, 
+but you can also have it with a small conversion, 
+so long as the spent is also small.
+This means that when spent is smaller, ROAS being bigger doesn't have to mean more clicks,
+which is what leads to a big conversion, which we don't have to have here for a larger ROAS.
+However, when spent is larger, a bigger ROAS should logically mean larger conversions,
+which should come from more clicks;
+so with larger spent we should find more clicks/impressions, although there may be a point of diminished returns.
+We get different outcomes if we run a correlation or a partial correlation,
+because when we account for spent we can get a clearer picture
+```{r}
+cor.test(fb_df_features_roas$roas, fb_df_features_roas$clicks)
+library(ppcor)
+pcor.test(fb_df_features_roas$roas, fb_df_features_roas$clicks, fb_df_features_roas$spent)
+
+cor.test(fb_df_features_roas$roas, fb_df_features_roas$impressions)
+pcor.test(fb_df_features_roas$roas, fb_df_features_roas$impressions, fb_df_features_roas$spent)
+```
+
+```{r}
+cor_df1 <- 
+  fb_df_features_roas %>%
+  filter(spent < quantile(spent, 0.5))
+cor_df2 <- 
+  fb_df_features_roas %>%
+  filter(spent > quantile(spent, 0.5))
+
+cor.test(cor_df1$roas, cor_df1$impressions)
+cor.test(cor_df2$roas, cor_df2$impressions)
+```
+
+```{r}
+cor.test(cor_df1$roas, cor_df1$clicks)
+cor.test(cor_df2$roas, cor_df2$clicks)
+```
+
+
+
+```{r}
+plotting_df <- 
+  fb_df_core_roas %>%
+  mutate(spent_factor = as.character(ifelse(spent > quantile(spent, 0.8), 5,
+                                            ifelse(spent > quantile(spent, 0.6) &
+                                                     spent < quantile(spent, 0.8), 4,
+                                                   ifelse(spent > quantile(spent, 0.4) &
+                                                            spent < quantile(spent, 0.6), 3,
+                                                          ifelse(spent > quantile(spent, 0.2) &
+                                                                   spent < quantile(spent, 0.4), 2, 1))))),
+         gender = as.factor(gender))
+```
+
+Visually showing that spent is hiding the real relationship between ROAS and impressions
+
+```{r}
+plot_fun <-  function(x){
+  qplot(data = (plotting_df %>%
+                  filter(roas != max(roas) & spent_factor == {x})),
+        x = impressions,
+        y = roas,
+        geom = c("point", "smooth"))
+}
+spent_plots <- lapply(unique(plotting_df$spent_factor), plot_fun)
+do.call("grid.arrange", c(spent_plots, ncol = 2))
+```
+
+Visually showing that spent is hiding the real relationship between ROAS and clicks
+```{r}
+
+plot_fun <-  function(x){
+  qplot(data = (plotting_df %>%
+                  filter(roas != max(roas) & spent_factor == {x})),
+        x = clicks,
+        y = roas,
+        geom = c("point", "smooth"))
+}
+spent_plots <- lapply(unique(plotting_df$spent_factor), plot_fun)
+do.call("grid.arrange", c(spent_plots, ncol = 2))
+```
+
+
+Going back to the snake plot,
+we can see that different variables seem to be responsible for differnt amounts of variance.
+We might use this to decide how to split our advertising budget to maximize ROAS.
+However, we might want to test for significance to help decide which groups to target in the future.
+If interests 63 and 16 have almost the same size ROAS,
+and it costs the same to target both groups,
+then you can just go with the bigger one.
+However, what if,
+say, e.g., that targeting 16, which is a little bigger,
+is more expensive.
+Wouldn't it be worth your while to examine if it's statistically bigger,
+and then look at the effect size to see how much more money it would bring it,
+to see if it worth the extra expense?
+```{r}
+fb_snake_plt_fun(fb_df_core_roas)
+```
+
+If we're comaping a factor variable with only two levels, 
+like gender,
+we run a t-test
+```{r}
+
+
+```
+
+Sometimes we're interested in a count type of outcome.
+e.g. we know from experience that any conversion is indicative of future conversions,
+so whether a person converted may be more important to us
+than predicting how many times they converted.
+If we dichotomize conversions, 
+and our predictor is catagorical,
+we can conceptualize the outcome as a count;
+how many people converted in each of the categories (say age), 
+like so:
+```{r}
+
+
+```
+
+However, we don't really want to run these tests each variable at a time.
+Yes, we could find the most significant ones from each group, 
+and then target the group with all three levels.
+However, we might find that one variable isn't significant at all, like interest,
+while the other, say age, is highly significant.
+In that case we don't have to bother with interest anymore
+(now of course the two may interact, but that's a different story),
+and we can look to see in greater detail what's going on with age.
+We may find that we don't want to spend any money on targeting interest,
+but we want to spend on targeting two age groups.
+
+All our variables here are factor variables, so we would want to run an ANOVA here,
+since our outcome is continuous.
+If we had continuous variables we would dummy code our factor variables
+(like we did with the pivoting above,
+so that they each had only two levels in them),
+and then run a regressions.
+
+```{r}
+
+
+```
+
+```{r}
+
+
+```
+
+```{r}
+
+
+```
+
+```{r}
+
+
+```
+
+```{r}
+
+
+```
+
+If I want to make sure that I train my data on all the levels of interest, 
+and all types of campaign (since I saw above that they slightly differ),
+I might want to stratify the splitting of the testing and training data.
+Otherwise, I may not be able to predict well if someone will likely convert,
+because I didn't have all the information to train the model on
+```{r}
+library(splitstackshape)
+set.seed(142)
+         stratified(data, c("interest", "xyz_camp"))
+
+```
