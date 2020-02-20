@@ -641,6 +641,7 @@ fb_snake_plt_fun(fb_df_core_roas)
 ```
 It seems like some of the ages, and some of the interests, and men account for larger portions of the ROAS
 But it's hard to know if it's significant to the extent that we'd want to act on it without statistics
+
 ```{r}
 library(corrgram)
 corrgram((fb_df_features_roas %>%
@@ -784,16 +785,133 @@ we can conceptualize the outcome as a count;
 how many people converted in each of the categories (say age), 
 like so:
 ```{r}
+qplot(data = (fb_df_core_roas %>%
+                mutate(approved_conversion_dich = as.factor(ifelse(approved_conversion == 0, 0, 1)),
+                       age = as.factor(age)) %>%
+                filter(approved_conversion_dich == 1)),
+      x = age,
+      geom = "bar",
+)
 
+#Count of number of people who had any  conversion by age
+#And count of number of people in each age group that were in the campaign
+fb_df_core_roas %>%
+  mutate(approved_conversion_dich = as.factor(ifelse(approved_conversion == 0, 0, 1)),
+         age = as.factor(age)) %>%
+  filter(approved_conversion_dich == 1) %>%
+  count(age, approved_conversion_dich)
 
 ```
 
-However, we don't really want to run these tests each variable at a time.
+A chi-square test tests whether the distribution of counts 
+amoungst the ages is uneven.
+That is, we can have something be different,
+but it may be due to chance, 
+so even if each of the 4 groups isn't receiving 25%
+of the counts, it doesn't mean that the difference is statistically different,
+but a chi-square test will calculate that for us:
+```{r}
+conv_count_fun <-
+  function(age_group, conversion){
+    fb_df_core_roas %>%
+  mutate(approved_conversion_dich = as.factor(ifelse(approved_conversion == 0, 0, 1)),
+         age = as.factor(age)) %>%
+  filter(approved_conversion_dich == {conversion},
+         age == {age_group}) %>%
+  count()
+  }
+
+count_3034 <- as.integer(conv_count_fun(age_group = "age_range_30_34", conversion = 1))
+count_3539 <- as.integer(conv_count_fun(age_group = "age_range_35_39", conversion = 1))
+count_4044 <- as.integer(conv_count_fun(age_group = "age_range_40_44", conversion = 1))
+count_4549 <- as.integer(conv_count_fun(age_group = "age_range_45_49", conversion = 1))
+
+chisq.test(c(count_3034, count_3539, count_4044, count_4549))
+```
+
+This just tells us that in general the distribution isn't spread out equally,
+but it's not telling us which of the groups is significantly different from the expected distribution of 1/4
+(because we have 4 groups).
+For that we can use a binomial test
+```{r}
+binom_test_fun <-
+  function(col_count){
+    sum_cols <- sum(count_3034, count_3539, count_4044, count_4549)
+    fraction <- 1/4
+
+    binom.test({col_count}, {sum_cols}, {fraction})
+  }
+
+
+col_count_list <- c(count_3034, count_3539, count_4044, count_4549)
+binom_test_fun(count_3539)
+lapply(col_count_list, binom_test_fun)
+```
+ 
+So 30-34 and 40-44 were statistically different from 1/4.
+But that's not actually what we're interested in,
+because, e.g., 30-34 has way more converted and unconverted total,
+so we should expect it to have more than 1/4 of the conversions.
+We need to figure out what the expected ratio is based on how many total people
+were in each age group,
+and take that into account in all our tests
+```{r}
+qplot(data = (fb_df_core_roas %>%
+                mutate(approved_conversion_dich = ifelse(approved_conversion == 0, 0, 1))),
+      x = age,
+      geom = "bar",
+      facets = . ~ approved_conversion_dich
+)
+
+#Count of number of people who had any  conversion by age
+#And count of number of people in each age group that were in the campaign
+fb_df_core_roas %>%
+  mutate(approved_conversion_dich = as.factor(ifelse(approved_conversion == 0, 0, 1)),
+         age = as.factor(age)) %>%
+  count(age, approved_conversion_dich)
+
+```
+
+
+```{r}
+
+count_3034_tot <- as.integer((fb_df_core_roas %>%
+                            select(age) %>%
+                            count(age))[1,2])
+count_3539_tot <- as.integer((fb_df_core_roas %>%
+                            select(age) %>%
+                            count(age))[2,2])
+count_4044_tot <- as.integer((fb_df_core_roas %>%
+                            select(age) %>%
+                            count(age))[3,2])
+count_4549_tot <- as.integer((fb_df_core_roas %>%
+                            select(age) %>%
+                            count(age))[4,2])
+
+count_age_tot <- sum(count_3034_tot, count_3539_tot, count_4044_tot, count_4549_tot)
+
+chisq.test(c(count_3034, count_3539, count_4044, count_4549), 
+           p = c(count_3034_tot/count_age_tot, 
+                 count_3539_tot/count_age_tot, 
+                 count_4044_tot/count_age_tot, 
+                 count_4549_tot/count_age_tot))
+chisq.test(c(count_3034, count_3539, count_4044, count_4549))
+```
+Once we adjust the expected ratio according to the total people in each group
+compared to other groups,
+it's suddenly not a significant predictor of whether someone converted
+
+However, the truth is that 
+we don't really want to run these tests each variable at a time.
 Yes, we could find the most significant ones from each group, 
 and then target the group with all three levels.
 However, we might find that one variable isn't significant at all, like interest,
 while the other, say age, is highly significant.
-In that case we don't have to bother with interest anymore
+Putting the variables together in a model 
+accounts for how much each variable account for the outcome
+taking into account the explanation power of the other variables in the model,
+so it's a truer picture of the variables' value, probably.
+In that case we wouldn't have to bother with interest anymore
 (now of course the two may interact, but that's a different story),
 and we can look to see in greater detail what's going on with age.
 We may find that we don't want to spend any money on targeting interest,
@@ -806,28 +924,194 @@ If we had continuous variables we would dummy code our factor variables
 so that they each had only two levels in them),
 and then run a regressions.
 
+I'm not going to put all those interests into the model, 
+so I'm going to see which are correlated at the top
+quantile, 
+and just choose those
 ```{r}
+interests <- as.data.frame(round(cor(fb_df_features_roas %>%
+            select(starts_with("interest"), roas)), 2)) %>%
+  add_column(var_names = colnames(as.data.frame(round(cor(fb_df_features_roas %>%
+             select(starts_with("interest"), roas)), 2)))) %>%
+               filter(var_names != "roas") %>%
+  select(var_names, roas) %>%
+  filter(roas > quantile(roas, .75))
 
+```
+
+Creating a new data frame, with only the interests above
+```{r}
+fb_df_core_roas1 <- 
+  inner_join(
+    
+    (fb_df_core_roas %>%
+       select(roas, interest, gender, age) %>%
+       mutate(interest = as.character(glue::glue("interest_{interest}")))),
+    
+    (interests %>%
+       select(var_names)),
+    by = c("interest" = "var_names")
+    
+  )  %>%
+  mutate_at(vars(interest, gender, age), as.factor)
+```
+
+According to this quick histogram I probably want to log the outcome
+```{r}
+qplot(fb_df_core_roas3$roas)
+qplot(log(fb_df_core_roas3$roas + 1))
+
+```
+
+
+I realized that with the three groups I have some cells with only one person in them,
+which doesn't really make sense to run,
+so I'm eliminating those.
+This will lead the anova to drop the variables
+that don't have all levels of the factor.
+I can easily run it twice and compare,
+and when I did the results were pretty comperable.
+In general, the cell counts are pretty low, 
+so it wouldn't surprise me if there is trouble finding significance for that reason
+```{r}
+fb_df_core_roas1b <- 
+  fb_df_core_roas1 %>% 
+  group_by(interest, age, gender) %>% 
+  mutate(n_groups = n()) %>% 
+  ungroup()  %>% 
+  filter(n_groups > 2) %>%
+  mutate_at(vars(interest, age, gender), as.factor) %>%
+  mutate(log_roas = log(roas + 1))
+```
+
+I can run the anova either in a simpler way, or a slightly longer way that effect codes the variables,
+which is what I would need to do if I wanted to use them in a regression 
+with continuous predictors.
+In effect it's really similar to the pivoting I did above,
+where each level was made into it's own column
+```{r}
+summary(
+  anova1aov<-aov(log_roas ~ interest + gender + age, data = fb_df_core_roas1b)
+  )
+library(car)
+Anova(anova1aov, type="3")
+
+
+#effect coding 
+contrasts(fb_df_core_roas1b$interest) <- contr.sum
+contrasts(fb_df_core_roas1b$age) <- contr.sum
+
+summary(
+  anova1<-lm(log_roas ~ interest + gender + age, data = fb_df_core_roas1b)
+  )
+Anova(anova1, type="3")
+```
+
+
+ANOVA assumptions:
+1)	Additivity of effects: that we can add components 
+(and no interactions), otherwise our p value is meaningless. 
+2)	Independence of samples/error: independence of noise. 
+Ensured through proper execution of the study by allowing each to contribute only one score. 
+Otherwise, it will cause the total random error to be minimized even when it shouldn’t be, 
+so you are more likely to commit a type I error. 
+We also need a genuinely random subject assignment, so that similar people don’t end up together.
+3)	Errors are normally distributed: The differences in each group relative to the group mean should be normally distributed.
+It's why we're testing for normality.
+4)	Homogeneity of variances: like Bartlet's or Levine's test (which looks at the medians). 
+You DON’T want the p value to be significant, 
+because you DON’T want a significant variances across groups.
+This is an easy resource: https://sites.ualberta.ca/~lkgray/uploads/7/3/6/2/7362679/slides_-_anova_assumptions.pdf
+
+Homogeneity of variances
+Bartlett is more sensitive to normality departures
+because it looks at the median instead of the mean
+```{r}
+leveneTest(log_roas ~ gender * interest * age, data = fb_df_core_roas1b) 
+bartlett.test(log_roas ~ interaction(gender , interest , age), data=fb_df_core_roas1b)
+#Epic fail 
+```
+
+For a visual test for homogeneity plot the residuals against the predicted values, and check whether the heights of the lines of the spread are mostly even.
+In addition to testing equal variance, it also tests linearity.
+The distance from the 0 line is how bad the prediction using the resulting regression equation was for that value compared to the actual Y value.
+Thus, if there is a shape, 
+it means we are always--systematically--off in the same way,
+which probably indicates a mispecified model.
+```{r}
+fb_df_core_roas1b$residuals <- anova1$residuals
+#Fitted values are the y that you would get if you input the x into the regression equation
+#since it's a prediction, it will obviously be a little different than what you actually have as your Y value
+fb_df_core_roas1b$pred <- anova1$fitted.values
+plot(anova1$residuals ~ anova1$fitted.values, data = fb_df_core_roas1b, type="p") 
+
+```
+
+
+
+Shapiro-Wilk test to test normality, 
+which tests for both skewness and kurtosis, 
+but is too sensitive if you have a lot of cases (I think over a few hundered),
+in which case you can assess visally using a qqplot.
+As in the Levine test, we want the p value to be north of .2
+```{r}
+shapiro.test(fb_df_core_roas1b$residuals) 
+
+qqPlot(fb_df_core_roas1b$residuals) 
+```
+
+I didn't do great in the qqPlot, 
+but I think well enough with the sample size that I'm ok.
+I'll redo the anova though with Welch's.
+to control for heteroscedastic data 
+(have differnt variance)
+I'm using Huber-White in the Anova,
+and the results are still really simple, 
+so I'll rerun with just age as a predictor
+```{r}
+Anova(anova1, type="3", white.adjust=TRUE)
+```
+
+```{r}
+summary(
+  anova1aov<-aov(log_roas ~ age, data = fb_df_core_roas1b)
+  )
+library(car)
+Anova(anova1aov, type="3")
+
+leveneTest(fb_df_core_roas1b$roas, fb_df_core_roas1b$age) 
+bartlett.test(log_roas ~ age, data=fb_df_core_roas1b)
+```
+
+
+```{r}
+fb_df_core_roas1b$residuals <- anova1aov$residuals
+#Fitted values are the y that you would get if you input the x into the regression equation
+#since it's a prediction, it will obviously be a little different than what you actually have as your Y value
+fb_df_core_roas1b$pred <- anova1aov$fitted.values
+plot(anova1aov$residuals ~ anova1aov$fitted.values, data = fb_df_core_roas1b, type="p") 
 
 ```
 
 ```{r}
+shapiro.test(fb_df_core_roas1b$residuals) 
 
-
+qqPlot(fb_df_core_roas1b$residuals) 
 ```
 
+
 ```{r}
-
-
+Anova(anova1aov, type="3", white.adjust=TRUE)
 ```
 
+https://en.wikipedia.org/wiki/Tukey%27s_range_test
+Tukey's to see where the difference is significant.
+I think my main conclusions
+is to stay away from the 45-49 range,
+and focus on 30-34
+
 ```{r}
-
-
-```
-
-```{r}
-
+TukeyHSD(anova1aov)
 
 ```
 
@@ -840,5 +1124,21 @@ because I didn't have all the information to train the model on
 library(splitstackshape)
 set.seed(142)
          stratified(data, c("interest", "xyz_camp"))
+```
+
+```{r}
+
+
+```
+
+
+```{r}
+
+
+```
+
+
+```{r}
+
 
 ```
