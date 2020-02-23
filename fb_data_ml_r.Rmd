@@ -234,7 +234,11 @@ column_camp_1178 %>%
   count()
 column_camp_1178 %>% distinct() %>% filter(camp_1178 > 0)  %>% count()
 
-fb_df %>% group_by(xyz_camp) %>% select(xyz_camp, ad_id) %>% summarize(n = n(), n_distinct = n_distinct(ad_id))
+fb_df %>% 
+  group_by(xyz_camp) %>% 
+  select(xyz_camp, ad_id) %>% 
+  summarize(n = n(), 
+            n_distinct = n_distinct(ad_id))
 ```
 So it seems like there is no overlap
 between ads in the differnt campaigns
@@ -611,6 +615,7 @@ fb_snake_plt_fun <-
       theme( legend.position='none' )
   }
 
+library(gridExtra)
 grid.arrange(fb_snake_plt_fun(fb_df_core_roas), 
              fb_snake_plt_fun(fb_df_core_roas %>% 
                                 filter(xyz_camp == "xyz_camp_1178")), 
@@ -790,7 +795,7 @@ qplot(data = (fb_df_core_roas %>%
                        age = as.factor(age)) %>%
                 filter(approved_conversion_dich == 1)),
       x = age,
-      geom = "bar",
+      geom = "bar"
 )
 
 #Count of number of people who had any  conversion by age
@@ -1114,6 +1119,51 @@ and focus on 30-34
 TukeyHSD(anova1aov)
 
 ```
+But what does this p-value mean?
+What a p-value lets you know,
+is the likelihood that you found the result you did,
+if the hypothesis you're making is false.
+This is much easier to understand with an example.
+Here, our hypothesis is that age determines ROAS.
+Another name for our hypothesis, is the experimental hypothesis.
+The alternative hypothesis is the opposite of the experimental hypothesis,
+and it's called the null hypothesis.
+In this example, 
+the alternative--the null--is that age does not determine ROAS.
+So to summarize, we have two hypotheses:
+the experimental, which is that age determines ROAS, 
+and the null, which is that age doesn't determine ROAS.
+The p-value comes into relevance after we assume that the null is true.
+That is,
+We're going to assume that in the real world,
+there actually is no relationship between age and ROAS.
+Now, we see that we found that there is a relationship between the two.
+It is possible that even if in the real world there is no
+relationship between age and ROAS,
+our specific study would find a relationship by chance.
+What we want to know is what is the liklihood that we 
+would find that relationship by chance.
+We may have found that age and relationship are related in our study, 
+even if they aren't in real life for a number of reasons.
+For example, we messed up while measuring ROAS,
+people lied about their ages, 
+or we just got a very skewed sample that doesn't refelect the true population.
+The p-value tells us how likely it is that we could get a finding
+that age and ROAS are related just by chance.
+In this example the p is at about 0.0002.
+That means that if there really wasn't a relashionship,
+the liklihood that we would find a relationship is only 0.02 percent of the time.
+Now, what's more reasonable,
+that in the real world there really isn't a relationship between age and ROAS,
+and we just happened to stumble on a 0.02 percent chance and found our findings
+that there is a relationship,
+or that the null is wrong, 
+and the hypothesis that there is a relationship between 
+age and ROAS is what happens in the real world?
+With a p of 0.0002 my money is on the null being wrong.
+p-vales help us determine how certain we are
+that we can believe that our experimental hypothesis is true.
+
 
 If I want to make sure that I train my data on all the levels of interest, 
 and all types of campaign (since I saw above that they slightly differ),
@@ -1121,10 +1171,74 @@ I might want to stratify the splitting of the testing and training data.
 Otherwise, I may not be able to predict well if someone will likely convert,
 because I didn't have all the information to train the model on
 ```{r}
+describe()
 library(splitstackshape)
 set.seed(142)
-         stratified(data, c("interest", "xyz_camp"))
+stratified(data, c("interest", "xyz_camp"))
 ```
+I want to play a little with PCA, 
+because I'll probably use it for my ML model.
+In reality, without knowing what the interests are,
+I can't know if I should be logically throwing them togethen into a PCA,
+but because some of those groups are so small,
+plus I want to play with PCA in a ML pipeline in R,
+I'm just going to dump them into a PCA together
+```{r}
+fb_df_features_roas_pca <- 
+  fb_df_features_roas %>% 
+  select_at(vars(matches("interest_")))
+
+#Since all the features have the same scale I don't have to scale thme
+#but it doesn't hurt 
+#and is usually necessary 
+pca <- prcomp(fb_df_features_roas_pca, scale = FALSE)
+
+
+
+library(factoextra)
+fviz_eig(pca)
+#Graph of individuals. Individuals with a similar profile are grouped together.
+fviz_pca_ind(pca,
+             col.ind = "cos2", # Color by the quality of representation
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE)     # Avoid text overlapping
+
+install.packages("devtools")
+library(devtool)
+install_github("vqv/ggbiplot")
+library(ggbiplot)
+ggbiplot(pca2, 
+         labels = fb_df_core_roas$interest, 
+         groups = fb_df_core_roas$age, 
+         ellipse = TRUE)
+#We can see that almost all the interests, 
+#except for 29, 16, 10, and somewhat 27
+#are all really similar and bunching together.
+#Adding the groups by age wasn't really helpful
+
+
+
+pca$scores 
+fb_df_core_roas_pca$pc1 <- as.vector(pca$scores[,1])
+```
+
+There are as many components as there are the feature interest levels.
+Proportion of Variance is home much of the information of the variables
+that I ran through PCA is explained by that component.
+We see the first one exmplains almost twice as much as the first one, 
+and the rest explain less and less.
+Using the first 19 components I can retain over 80% of the information, 
+so to speak, of the original variables, 
+even though I can still dump more than half of them
+```{r}
+summary(pca)
+#to see how the component load onto the first PCA component
+pca$rotation[,1]
+#And the loadings on the second
+pca$rotation[,2]
+
+```
+
 
 ```{r}
 
@@ -1132,13 +1246,95 @@ set.seed(142)
 ```
 
 
+
 ```{r}
+remotes::install_github("tlverse/sl3@v1.3.5")
+library(sl3)
+
+```
+
+Fit scaler on features training data
+Transform features training data by applying fitted scaler to it
+Do something with Y training data?
+Create classifier with parameters of choice
+Fit classifier onto training data and save as the model
+Scale test features
+Predict on test set using the model to predict from the test featres data
+Create classification report based on comparing the predicted test output & actual test output
+```{r}
+
 
 
 ```
 
 
+
+```{python}
+#Extracting and plotting the top features of the original LR
+clf_lr = LogisticRegression(penalty='l1',
+            class_weight='balanced', # penalize
+            n_jobs=-1, #use all cpus
+            )
+
+clf_lr.fit(df_train_x_scaled, df_train_y1)
+coef = clf_lr.coef_.ravel()
+coef_df = pd.DataFrame(coef)
+coef_df['var'] = ('click_stream_count', 'edit_columns_count', 'sheets_created_count', 'view_change_count', 'insert_columns_count', 'people_shared_to_count', 'is_org_domain', 'logins_count', 'non_mobile_count', 'team_trial', 'was_shared_to_prior_to_trial', 'attachment_count', 'discussion_count', 'mobile_logins_count', 'country_united_states')
+coef_df.columns = ['coef', 'var']
+print(coef_df)
+# %%
+plt.figure();
+coef_df.sort_values('coef', ascending=False).plot(kind='bar')
+plt.xticks([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], ['click_stream_count', 'is_org_domain', 'team_trial', 'was_shared_to_prior_to_trial',  'country_united_states', 'people_shared_to_count', 'logins_count', 'mobile_logins_count', 'edit_columns_count',  'discussion_count', 'sheets_created_count', 'view_change_count', 'insert_columns_count', 'attachment_count', 'non_mobile_count'])
+plt.tick_params(axis='x', colors='blue', direction='out', length=15, width=1)
+
+# %%
+#We can predict probabilities of a person's likelihood to convert, and not just yes/no
+#This propensity score can help us decide who to prioritize to contact
+pred_prob=clf_lr.predict_proba(test_x_scaled)
+#For example this person only has repeatedly gone to Smartsheet from the computer, and that was a negative coefficient
+#We see with that data they have a very low likelihood of conversion--about 6%--so we shouldn't contact them:
+trial_data = np.array([0,0,0,0,0,0,0,0,20,0,0,0,0,0,0]).reshape(1, -1)
+
+print("New visitor: propensity :",clf_lr.predict_proba(trial_data)[:,1])
+# %%
+#on the other hand this person has a lot of clickstream data
+#This is associated with high conversion likelihood, and we see that we should probably contact them
+trial_data = np.array([30,0,0,0,0,0,0,0,0,0,0,0,0,0,0]).reshape(1, -1)
+
+print("New visitor: propensity :",clf_lr.predict_proba(trial_data)[:,1])
+# %% markdown
+# This is the answer to our question, because the variables with the positive coefficients are the ones that predict conversion
+# So if you have limited resources contact the people who:
+# 1) Have a lot of clickstreams
+# 2) Signed up for work
+# 3) Are doing this as part of a team
+# 4) Had engagement with the product before signing up
+# 5) Are in the US
+# 6) Shares with others
+# 7) Use it a lot, especially on mobile
+# There are other positive coefficients, so depending on resources you could focus on people in those groups as well, but these are the larger ones. It's worth noting that most of this isn't surprising, and this is good because it allows us to have confidence in our findings. Smartsheet is a brilliant management tool, so it makes sense that those who liked it most were managing larger enterprises (as indicative by the importance of work and sharing indicators), had it brought to there attention by someone else who previously shared something with them (and then either liked it or needed a trial to collaborate), and therefore found it useful enough to convert.
+#
+# I was a little surprised by the importance of mobile, but it is possible that a lot of management and tasks get done from smartphones at all hours as opposed to computers. Therefore, another actionable insight might be to try and continue to optimize mobile performance, because that seems to be an attractive feature for people, along with continuing to optimize the ease of interaction of multipule people on projects, as that seems to be why people convert as well.
+#
+# So to conclude, you can use the model to determine who to prioritize and contact, and know that it is probably going to be the people who are highest in the above variables, and you may want to further optimize the product on those and related features.
+
+
+
+```
+
+
+
 ```{r}
+
+
+
+```
+
+
+
+```{r}
+
 
 
 ```
