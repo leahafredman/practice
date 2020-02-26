@@ -607,7 +607,7 @@ fb_snake_plt_fun <-
              axis1 = interest,
              axis2 = age,
              axis3 = gender) ) +
-      scale_x_discrete(limits = c('gender', 'age', 'interest')) +
+      scale_x_discrete(limits = c('interest', 'age', 'gender')) +
       # I've added a colour gradient to the links 
       geom_flow( aes( fill= age) ) +
       geom_stratum(width = 1/4, fill = "white", color = "black") + #adds boxes for the labels on the plot
@@ -634,6 +634,7 @@ grid.arrange(fb_snake_plt_fun(fb_df_core_roas),
 
 ```
 
+
 You can see from the above plots how important it is to understand what, exactly, you want to look at.
 Without knowing the difference between the xyz campaigns,
 I can't know what I'm attributing the differences I see in the graph to.
@@ -646,6 +647,86 @@ fb_snake_plt_fun(fb_df_core_roas)
 ```
 It seems like some of the ages, and some of the interests, and men account for larger portions of the ROAS
 But it's hard to know if it's significant to the extent that we'd want to act on it without statistics
+
+```{r}
+library(viridis)
+roas_p <-
+  ggplot(data = (fb_df_core_roas %>% mutate(gender = as.character(gender)))) +
+  geom_point(
+    aes(
+      x = interest,
+      y = roas,
+      color = spent,
+      shape = gender,
+      size = age,
+      frame = approved_conversion,
+      alpha = .05,
+      text = paste('Interest: ', interest, '<br>',
+        'Age: ', age, '<br>',
+        'Gender: ', ifelse(gender == 1, 'Female', 'Male'), '<br>',
+        'Spent: $', spent, '<br>',
+        'Conversions: ', approved_conversion, '<br>',
+        'ROAS: $', roas, sep = '')
+        )
+    ) +
+  labs(title = 'title') +
+  scale_shape_discrete(name = "Gender",
+                       breaks = c("0", "1"),
+                       labels = c("Male", "Female")) +
+  scale_size_discrete(name = "Age",
+                      breaks = c("age_range_30_34",
+                                 "age_range_35_39",
+                                 "age_range_40_44",
+                                 "age_range_45_49"),
+                      labels = c("30-34",
+                                 "35-39",
+                                 "40-44",
+                                 "45-49")) +
+  viridis::scale_color_viridis() +
+  theme(text = element_text(family = 'Arial'))
+
+#library(plotly)
+plotly::ggplotly(roas_p, tooltip = 'text')
+```
+
+```{r}
+library(viridis)
+library(plotly)
+
+roas_p <-
+ggplot(data = (fb_df_core_roas %>% mutate(gender = as.factor(gender)))) +
+  geom_point(
+    aes(
+      x = spent,
+      y = roas,
+      color = gender,
+      shape = age,
+      frame = approved_conversion,
+      text = paste('Interest: ', interest, '<br>',
+        'Age: ', age, '<br>',
+        'Gender: ', ifelse(gender == 1, 'Female', 'Male'), '<br>',
+        'Spent: $', spent, '<br>',
+        'Conversions: ', approved_conversion, '<br>',
+        'ROAS: $', roas, sep = '')
+        )
+    ) +
+  labs(title = 'title') +
+  scale_shape_discrete(name = "Gender",
+                       breaks = c("0", "1"),
+                       labels = c("Male", "Female")) +
+  scale_color_discrete(name = "Age",
+                      breaks = c("age_range_30_34",
+                                 "age_range_35_39",
+                                 "age_range_40_44",
+                                 "age_range_45_49"),
+                      labels = c("30-34",
+                                 "35-39",
+                                 "40-44",
+                                 "45-49")) +
+  theme(text = element_text(family = 'Arial'))
+
+plotly::ggplotly(roas_p, tooltip = 'text')
+```
 
 ```{r}
 library(corrgram)
@@ -1253,7 +1334,75 @@ library(sl3)
 
 ```
 
+Fit scaler on features training data
+Transform features training data by applying fitted scaler to it
+Do something with Y training data?
+Create classifier with parameters of choice
+Fit classifier onto training data and save as the model
+Scale test features
+Predict on test set using the model to predict from the test featres data
+Create classification report based on comparing the predicted test output & actual test output
+```{r}
 
+
+
+```
+
+
+
+```{python}
+#Extracting and plotting the top features of the original LR
+clf_lr = LogisticRegression(penalty='l1',
+            class_weight='balanced', # penalize
+            n_jobs=-1, #use all cpus
+            )
+
+clf_lr.fit(df_train_x_scaled, df_train_y1)
+coef = clf_lr.coef_.ravel()
+coef_df = pd.DataFrame(coef)
+coef_df['var'] = ('click_stream_count', 'edit_columns_count', 'sheets_created_count', 'view_change_count', 'insert_columns_count', 'people_shared_to_count', 'is_org_domain', 'logins_count', 'non_mobile_count', 'team_trial', 'was_shared_to_prior_to_trial', 'attachment_count', 'discussion_count', 'mobile_logins_count', 'country_united_states')
+coef_df.columns = ['coef', 'var']
+print(coef_df)
+# %%
+plt.figure();
+coef_df.sort_values('coef', ascending=False).plot(kind='bar')
+plt.xticks([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], ['click_stream_count', 'is_org_domain', 'team_trial', 'was_shared_to_prior_to_trial',  'country_united_states', 'people_shared_to_count', 'logins_count', 'mobile_logins_count', 'edit_columns_count',  'discussion_count', 'sheets_created_count', 'view_change_count', 'insert_columns_count', 'attachment_count', 'non_mobile_count'])
+plt.tick_params(axis='x', colors='blue', direction='out', length=15, width=1)
+
+# %%
+#We can predict probabilities of a person's likelihood to convert, and not just yes/no
+#This propensity score can help us decide who to prioritize to contact
+pred_prob=clf_lr.predict_proba(test_x_scaled)
+#For example this person only has repeatedly gone to Smartsheet from the computer, and that was a negative coefficient
+#We see with that data they have a very low likelihood of conversion--about 6%--so we shouldn't contact them:
+trial_data = np.array([0,0,0,0,0,0,0,0,20,0,0,0,0,0,0]).reshape(1, -1)
+
+print("New visitor: propensity :",clf_lr.predict_proba(trial_data)[:,1])
+# %%
+#on the other hand this person has a lot of clickstream data
+#This is associated with high conversion likelihood, and we see that we should probably contact them
+trial_data = np.array([30,0,0,0,0,0,0,0,0,0,0,0,0,0,0]).reshape(1, -1)
+
+print("New visitor: propensity :",clf_lr.predict_proba(trial_data)[:,1])
+# %% markdown
+# This is the answer to our question, because the variables with the positive coefficients are the ones that predict conversion
+# So if you have limited resources contact the people who:
+# 1) Have a lot of clickstreams
+# 2) Signed up for work
+# 3) Are doing this as part of a team
+# 4) Had engagement with the product before signing up
+# 5) Are in the US
+# 6) Shares with others
+# 7) Use it a lot, especially on mobile
+# There are other positive coefficients, so depending on resources you could focus on people in those groups as well, but these are the larger ones. It's worth noting that most of this isn't surprising, and this is good because it allows us to have confidence in our findings. Smartsheet is a brilliant management tool, so it makes sense that those who liked it most were managing larger enterprises (as indicative by the importance of work and sharing indicators), had it brought to there attention by someone else who previously shared something with them (and then either liked it or needed a trial to collaborate), and therefore found it useful enough to convert.
+#
+# I was a little surprised by the importance of mobile, but it is possible that a lot of management and tasks get done from smartphones at all hours as opposed to computers. Therefore, another actionable insight might be to try and continue to optimize mobile performance, because that seems to be an attractive feature for people, along with continuing to optimize the ease of interaction of multipule people on projects, as that seems to be why people convert as well.
+#
+# So to conclude, you can use the model to determine who to prioritize and contact, and know that it is probably going to be the people who are highest in the above variables, and you may want to further optimize the product on those and related features.
+
+
+
+```
 
 
 
