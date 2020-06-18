@@ -1,0 +1,124 @@
+---
+title: "causal_inferencing"
+author: "aria_fredman"
+date: "6/18/2020"
+output: html_document
+---
+playing with causal inferencing
+
+loading libraries of interest
+```{r}
+library(tidyverse); library(MatchIt); library(mosaic); library(psych)
+```
+
+setting the working directory
+```{r}
+setwd("C:/Users/Aria/Documents/ds_practice/R/causal_inferencing")
+```
+
+
+loading the lalonde data from the MatchIt library
+```{r}
+data(lalonde)
+```
+A data frame with 614 observations (185 treated, 429 control). There are 10 
+variables measured for each individual. "treat" is the treatment assignment 
+(1=treated, 0=control). "age" is age in years. "educ" is education in number of 
+years of schooling. "black" is an indicator for African-American 
+(1=African-American, 0=not). "hispan" is an indicator for being of Hispanic 
+origin (1=Hispanic, 0=not). "married" is an indicator for married (1=married, 
+0=not married). "nodegree" is an indicator for whether the individual has a high 
+school degree (1=no degree, 0=degree). "re74" is income in 1974, in U.S. dollars. 
+"re75" is income in 1975, in U.S. dollars. "re78" is income in 1978, in U.S. dollars.
+
+
+eyeballing the first few rows
+```{r}
+df_l <- lalonde
+
+head(lalonde)
+```
+
+examing the data structure
+```{r}
+str(df_l)
+```
+column names also all look fine
+
+curious mostly whether we have exactly 2 levels in the variables where we'd expect
+that
+```{r}
+df_l %>% 
+  summarise_all(n_distinct)
+```
+
+statistics for the different columns
+```{r}
+psych::describe(df_l)
+```
+
+statistics for the different columns by treatment
+```{r}
+psych::describeBy((df_l %>%
+                   select(-age)), 
+                df_l$treat)
+
+```
+we see the classes are pretty imbalanced with far fewer in the treatment condition
+more blacks, less latinos, less married and more people without degrees in the
+treatment condition
+salaries are lower for each of those years, but seeing that the confounding variables
+don't seem to be equally spread across the conditions it's unclear that the 
+treatment didn't work
+this could be especially the case if we're interested in whether the treatment
+increases earnings relative to a starting point, and not over all
+the people in the treatment condition had a lower starting point so even if 
+their end point is lower they may still have come out ahead
+either way we want to compare apples to apples across conditions and here we're
+comparing apples to pears across conditions
+
+i want to create two outcome variables
+a 
+```{r}
+
+```
+
+
+```{r}
+
+```
+
+
+```{r}
+
+```
+
+
+```{r}
+
+```
+
+
+```{r}
+
+```
+
+
+```{r}
+
+```
+
+
+```{r}
+
+```
+
+
+```{r}
+
+```
+
+
+```{r}
+
+```
