@@ -1,0 +1,234 @@
+---
+title: "practice_network_analysis"
+author: "aria_fredman"
+date: "6/17/2020"
+output: html_document
+---
+
+code heavily inspired by this https://www.youtube.com/watch?v=2GRs1HKaLnA
+will be adding more from other sources as i progress investigating this method
+the data can be found on that link as well
+
+loading the packages i will need
+```{r}
+library(tidyverse); library(tm); library(igraph)
+```
+
+setting the working directory
+importing the data
+```{r}
+setwd("C:/Users/Aria/Documents/ds_practice/R/network_analytics")
+df_tweets <- read_csv("apple.csv")
+```
+
+eyeballing data types
+```{r}
+str(df_tweets)
+```
+
+eyeballing data
+```{r}
+View(df_tweets)
+```
+
+Getting column names
+```{r}
+colnames(df_tweets)
+```
+I'd rather have underscores between words
+and make everything lowercase
+
+changing column names
+we're looking at the lower case or numbers as a group 
+followed by upper case letter as another group and 
+replacing it with backreference for that group separated by _
+```{r}
+colnames(df_tweets) <- 
+  tolower(
+    gsub("([a-z1-9])([A-Z])", 
+         "\\1_\\2", 
+         colnames(df_tweets))
+    )
+
+colnames(df_tweets)
+```
+
+converting character vector between enchodings
+```{r}
+corpus_text <- iconv(df_tweets$text, to = "UTF-8")
+```
+
+Creating a vector source
+converting that to a corpus
+that is a collection of documents of text
+each document will have a single text
+and its metadata
+```{r}
+corpus <- Corpus(VectorSource(corpus_text))
+```
+
+Cleaning the text
+if you have to apply the same transformations
+to multiple corpora it pays to make a function out 
+of the cleaning process
+I don't have that need here
+but for funsies I'll do the function anyways
+```{r}
+clean_corpus_fun <- function(corp_name){
+  corp_name <- tm_map(corp_name, tolower)
+  corp_name <- tm_map(corp_name, removePunctuation)
+  corp_name <- tm_map(corp_name, removeNumbers)
+  corp_name <- tm_map(corp_name, removeWords, words = stopwords(kind = 'en'))
+  #creating anonymous function to sub anything starting with
+  #http and then a non alpha-numeric character
+  #and then anything after it with a space
+  remove_url <- function(x) gsub('http[[:alnum:]]*', '', x)
+  corp_name <- tm_map(corp_name, content_transformer(remove_url))
+  #stripping whitespaces
+  corp_name <- tm_map(corp_name, stripWhitespace)
+}
+
+clean_corpus <- clean_corpus_fun(corpus)
+```
+
+Taking unstructured data
+and giving it structure in the form of a matrix
+creating a term document matrix
+the columns represent the tweet number
+the rows are words that appear in any of the tweets
+the cells show how many times that word appears in that
+tweet
+```{r}
+tdm <- as.matrix(TermDocumentMatrix(clean_corpus)) 
+```
+
+examining the output it looks like
+everyone mentions apple or aapl
+i guess these are all texts about apple
+so it makes sense to remove that as well
+so going back to function to add that
+```{r}
+clean_corpus_fun <- function(corp_name){
+  corp_name <- tm_map(corp_name, tolower)
+  corp_name <- tm_map(corp_name, removePunctuation)
+  corp_name <- tm_map(corp_name, removeNumbers)
+  corp_name <- tm_map(corp_name, removeWords, words = c(stopwords(kind = 'en'), 'aapl', 'apple'))
+  #creating anonymous function to sub anything starting with
+  #http and then a alpha-numeric character
+  #and then anything after it with a space
+  remove_url <- function(x) gsub('http[[:alnum:]]*', '', x)
+  corp_name <- tm_map(corp_name, content_transformer(remove_url))
+  #removing all non alphanumeric characters
+  #that space between the second pair of square brackets
+  #is needed to preserve the spaces
+  #and not smush everything together
+  remove_url <- function(x) gsub('[^[:alnum:] ]', '', x)
+  corp_name <- tm_map(corp_name, content_transformer(remove_url))  #stripping whitespaces
+  corp_name <- tm_map(corp_name, stripWhitespace)
+}
+
+clean_corpus <- clean_corpus_fun(corpus)
+
+tdm <- as.matrix(TermDocumentMatrix(clean_corpus)) 
+```
+
+Since there are so many words I want to limit myself only to those who have enough
+relationships with other words to be useful
+so here I'll choose only words with at least 20 connections
+```{r}
+tdm <- tdm[rowSums(tdm) > 20,]
+```
+
+one hot enchoding the TDM
+meaning converting everything greater than
+1 into 1
+```{r}
+tdm[tdm > 1] <- 1
+```
+
+Creating a term-term matrix showing how many times
+in our corpus a combination of a pair of two words
+the word on the column and the word on the row
+appeared together in a single tweet
+```{r}
+term_term <- tdm %*% t(tdm)
+
+```
+
+creating an igraph from adjacency matrices
+we use the simplify command to remove loops where the same word is paired against
+itself in the matrix
+```{r}
+graphtt <-
+  simplify(
+    graph.adjacency(term_term,
+                weighted = T,
+                mode = 'undirected')
+    ) #this means that we're not indicating on 
+#the graph that we're going from one node to the other, or from the first to 
+#the second node
+
+```
+
+label are the different words in the tweets
+degree are the number of connections between terms
+we need to pull those two things our and create a vetrex sequence for each
+so they contain all the vertices of the graph
+a vertex sequence is simply a vector containing numeric vertex ids, but it has a special class attribute which makes it possible to perform graph specific operations on it, like selecting a subset of the vertices based on graph structure, or vertex attributes.
+```{r}
+V(graphtt)$label <- V(graphtt)$name
+V(graphtt)$degree <- degree(graphtt)
+
+```
+
+Network diagram
+```{r}
+set.seed(222)
+
+plot(graphtt,
+     vertex.color='green', #controlling node color
+     vertex.size = 5, #of the nodes and graph
+     vertex.label.dist = 1.5,
+     vertex.label = NA) #initially looking at the diagram without labels
+
+```
+
+we can find the densely connected nodes to each other with less connections
+across groups in different ways
+The edge-betweenness method iteratively removes edges with high betweenness, with the idea that they are likely to connect different parts of the network. Here betweenness (gatekeeping potential) applies to edges, but the intuition is the same.
+here edges are interpreted as distances, not as connection strengths
+```{r}
+comm <- cluster_edge_betweenness(graphtt)
+plot(comm, graphtt)
+```
+
+this works by labeling the vertices with unique labels and then updating the labels by majority voting in the neighborhood of the vertex, and repeat this iteratively until each node has the most common labels among its neighbors.
+```{r}
+prop <- cluster_label_prop(graphtt)
+plot(prop, graphtt)
+
+```
+
+The fast and greedy method tries to directly optimize this modularity score
+```{r}
+
+
+```
+
+
+```{r}
+
+
+```
+
+
+```{r}
+
+
+```
+
+
+```{r}
+
+
+```
