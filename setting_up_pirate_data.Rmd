@@ -1,0 +1,108 @@
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE, warning = TRUE, fig.showtext = T, fig.retina = 1)
+```
+
+Importing libraries that I'm interest in
+```{r prep_lib}
+library(tidyverse)
+library(lubridate)
+library(psych)
+library(stringr)
+library(magrittr)
+library(DataExplorer)
+library(gridExtra)
+
+```
+
+I'm starting by setting my working directory to where my data are saved
+then reading in my data
+```{r data_readin}
+df_pirate <- read_csv("~/datapath/dataname.csv")
+```
+
+Looking at the column names to see if their format is uniform/what i like
+```{r colnames_check}
+colnames(df_pirate)
+```
+
+overwriting the column names
+```{r colnames_overwrite}
+df_pirate %<>%
+  rename(pirateId = user_id,
+         firstMission = first_convo,
+         lastMission = last_convo,
+         missionCount = convo_count,
+         pirateLevel = counselorlevel,
+         missionHours = hours,
+         teamSatisfactionAvg = satisfaction_avg,
+         nightOrDay = late_night_status,
+         team = cohort) %>%
+  dplyr::select(-lead_created, -created_on, -last_login, -num_of_sat_ratings, -hours_this_week)
+
+View(df_pirate)
+```
+
+```{r colnames_check_pirate}
+colnames(df_pirate)
+```
+
+```{r team_lvls_check}
+df_pirate$team %>% unique()
+```
+
+```{r change_team_id_lvls}
+df_pirate %<>% 
+  mutate(crew = dense_rank(team),
+         piratesId = dense_rank(pirateId))
+
+df_pirate %>% 
+  dplyr::select(team, crew, pirateId, piratesId) %>% 
+  distinct()
+```
+
+```{r change_dates}
+df_pirate %<>%
+  mutate(across(2:3, ymd_hms),
+         numadd = as.integer(sample(3000678, size = nrow(.), replace = TRUE))) %>%
+  mutate(Mission1 = as.character(firstMission + numadd),
+         missionLast = as.character(lastMission + numadd),
+         dayOrNight = case_when(nightOrDay == 
+                                  'MajorityDuringDay' ~ "day_pirate",
+                                nightOrDay == 
+                                  'MajorityLateNight' ~ "night_pirate",
+                                TRUE ~ nightOrDay)) %>%
+  dplyr::select(-firstMission, -lastMission, -numadd, -team, -pirateId, -nightOrDay)
+
+str(df_pirate)
+
+df_pirate$states <- df_pirate$state
+set.seed(42)
+rows <- sample(nrow(df_pirate))
+df_pirate$states <- df_pirate$states[rows]
+df_pirate <- df_pirate %>% dplyr::select(-state)
+
+df_pirate %<>%
+  mutate(numadd = as.integer(sample(6, size = nrow(.), replace = TRUE))) %>%
+  mutate(ages = as.character(age + numadd),
+         occupation = case_when(((occupation != "Student") & (occupation != "Working")) ~ "other",
+                                TRUE ~ occupation)) %>%
+    dplyr::select(-numadd, -age) %>%
+  rename(state = states,
+         pirateId = piratesId,
+         age = ages)
+
+df_pirate_sub = sample_frac(df_pirate, 0.85)
+```
+
+```{r}
+head(df_pirate_sub)
+```
+
+
+```{r csv_write}
+write_csv(df_pirate_sub, "~/Documents/data_science/data_science_practice/R/pirates_clustering/df_pirate.csv")
+df_pirate <- read_csv("~/Documents/data_science/data_science_practice/R/pirates_clustering/df_pirate.csv")
+head(df_pirate)
+```
