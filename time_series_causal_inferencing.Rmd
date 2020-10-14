@@ -1,0 +1,129 @@
+---
+title: "daily_demand_forecasting_orders"
+author: "aria_fredman"
+date: "10/13/2020"
+output: html_document
+---
+setting working directory
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(root.dir = "~/Documents/data_science/data/daily_demand_orders")
+
+```
+
+loading packages
+```{r loading libraries}
+
+library(CausalImpact); library(tidyverse); library(magrittr)
+
+```
+
+setting the working directory
+reading in the csv data
+NOTE all data were collected during a single month
+```{r wd reading data, echo=FALSE}
+
+setwd("~/Documents/data_science/data/daily_demand_orders")
+df <- read.csv("daily_demand_forecasting_orders.csv")
+
+```
+
+looking at the first few rows
+```{r 1st head}
+
+head(df)
+
+```
+That looks very wrong
+probably a parsing issue
+```{r sep}
+
+setwd("~/Documents/data_science/data/daily_demand_orders")
+df <- read.csv("daily_demand_forecasting_orders.csv", sep = ";")
+head(df)
+
+```
+much better!
+better look at column names
+```{r }
+
+colnames(df)
+
+```
+I want to remove periods at the end of the name
+underscores instead of periods
+all underscore
+```{r }
+
+colnames(df) <-
+  gsub("[[:punct:]]+$", "", colnames(df))
+
+#looking for all punctuation with nothing after it and replacing it with nothing
+
+colnames(df)
+
+```
+
+I want to replace one or more periods
+with underscores instead of periods
+all underscore letters
+```{r }
+
+colnames(df) <-
+  tolower(
+#taking all one or more periods in column names and subbing with underscores
+#since . is a special character meaning any character, we need to escape it first
+    gsub("\\.+", "_", colnames(df)) 
+  )
+
+colnames(df)
+
+```
+some of these names are absurd and need to be shortened
+I don't want columns 8 through 12
+```{r }
+
+colnames(df)[1] <-
+  "week"
+
+colnames(df)[2] <-
+  "day"
+
+df %<>% select(-8:-12)
+
+colnames(df)
+
+```
+
+
+```{r }
+
+
+
+```
+
+```{r }
+
+
+
+```
+
+```{r }
+
+
+
+```
+
+```{r }
+
+
+
+```
+
+```{r }
+
+
+
+```
+
