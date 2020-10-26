@@ -1,0 +1,405 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+
+```{r}
+library("tidyverse"); library("car"); library("psych"); library("rworldmap"); library("RColorBrewer")
+
+```
+
+```{r}
+storefull.df <- read.csv("http://goo.gl/QPDdMl")
+
+```
+
+```{r}
+dim(store.df)
+
+```
+
+
+```{r}
+colnames(store.df)
+
+```
+
+
+```{r}
+str(store.df)
+
+```
+
+
+```{r}
+store.df <-
+ storefull.df %>% 
+  mutate(across(c(storeNum, country), #no "" surrounding the column names
+                function(x){as.factor(x)}, #couldv'e just done factor instead of anonymous function
+                .names = "{col}")) #{col} must be surrounded by "". It's what we want to call the new columns; here we overwrite the previous columns
+
+str(store.df)
+```
+
+
+```{r}
+head(store.df, 120)
+```
+
+
+```{r}
+tail(store.df, 120)
+```
+
+
+```{r}
+unique(store.df$p1sales)
+```
+
+
+```{r}
+#setting seed to make process replicable
+#this way whenever drawing random samples in the same sequence again we'll get the same numbers
+set.seed(98250)
+#rbinom(n, size, p) to draw from the binomial distribution
+#random sampling from a specific range:
+#store.df$p1price <- sample(x=c(2.19, 2.29, 2.49, 2.79, 2.99), size=nrow(store.df), replace=TRUE)
+#for something that's unit counts--like num of items sold--we should sample from
+#the Poisson distribution, which is a discrete probability distribution
+#It  expresses the probability of a given number of events occurring in a fixed 
+#interval of time or space if these events occur with a known constant mean rate 
+#and independently of the time since the last event
+#rpois(n, lambda), where n is the number of draws and lambda is the mean value of units per week
+```
+
+
+```{r}
+some(store.df, 10) #from car library choosing random 10 rows
+```
+
+
+```{r}
+table(store.df["p1price"]) #frequency distribution table #equivalent to table(store.df$p1price)
+```
+
+
+```{r}
+#A cross tabulation table can be constructed with the table function and 2 column names
+plott <- table(store.df$p1price, store.df$p1prom) #counts per price, as broke down by promotion
+plott
+```
+
+```{r}
+plot(plott) #y-axis isn't absolute counts; it's proportion
+```
+
+```{r}
+plot(table(store.df["p1price"]))
+```
+
+```{r}
+#computing the percent of time that product 1 was promoted
+#which was set by drawing randomly from a binomial distribution with a p = .1
+#so we should expect to find that across stores the rate of product 1's promotion is about 10%
+#dividing the second column of the cross tab table--number of time it was promoted--
+#by the total of the two columns per row--how many times total it was sold at that price
+plott[,2] / (plott[,1] + plott[,2]) * 100 #doing this across all rows
+```
+
+
+```{r}
+#gives range (min, max); mean; median; and 1st + 3rd quantiles; or counts for factor variables
+summary(store.df, digits = 1) #digits changes precision of display
+```
+
+
+```{r}
+psych::describe(store.df) #comparing trimmed mean to overall mean can help diagnose outliers
+```
+
+
+```{r}
+store.df %>% #creating cross tabs table with 
+  pivot_longer(cols = c(p1sales, p2sales), #combining sales columns into a single column
+               names_to = "product_num", #new column name with values that are the old column names
+               values_to = "product_sales") %>% #new column name with values that are old columns' values
+  mutate(
+    Product = 
+      ifelse(product_num == "p1sales", "Product 1", "Product 2")) %>% #renaming product_num values + column name
+  group_by(Product) %>%
+  summarise('Median Sales' = median(product_sales),
+            IQR = IQR(product_sales))
+```
+
+
+```{r}
+#using apply to find the median sales for product 1
+apply(store.df[4], MARGIN = 2, FUN = median)
+```
+
+
+
+```{r}
+#using apply to find the median sales for products 1 & 2 by rows
+#so output sould have as many values as the dataframe has rows
+apply(store.df[,4:5], MARGIN = 1, FUN = median)
+```
+
+
+
+```{r}
+#apply with an anonymous function to look at difference of means and medians 
+#having it be a positive number indicates a right tale to the sales data
+apply(store.df[,4:5], MARGIN = 2, FUN = function(x){mean(x) - median(x)})
+```
+
+
+```{r}
+#product 1 sales histrogram
+hist(store.df$p1sales,
+     main = "Product 1 sales frequencies for all stores",#main plot label
+     xlab = "Product 1 sales in units",#x-axis label
+     ylab = "Relative sales frequency", #y-axis label
+     breaks = 30, #how many bins
+     col = "lightgreen", #histogram fill color
+     freq = FALSE, #so that it's proportions and not counts
+     xaxt = "n") #turning off the x-axis and adding one below
+axis(side = 1, #to alter x-axis (y would be 2)
+     at = seq(60, 300, by = 20)) #specifying ticks to go from 60 to 300 with jumps of 20
+lines( #adds elements to current plot, like a smoothed estimation line
+  density(store.df$p1sales, 
+          bw = 7), ##adjusting smoothness
+  type = "l",
+  col = "darkblue", #line color
+  lwd = 2) #like width
+```
+
+
+
+```{r}
+#single variable boxplot
+boxplot(store.df$p2sales, 
+        xlab="Weekly sales", 
+        ylab="P2", 
+        main="Weekly sales of P2, All stores", 
+        horizontal = TRUE) #flipping the plot 90 degrees
+```
+
+
+
+```{r}
+#boxplot of one variable as a function of a second
+#here sales of product 2 by store
+boxplot(data = store.df,
+        p2sales ~ storeNum, 
+        xlab="Weekly sales", 
+        ylab="P2", 
+        main="Weekly sales of P2, All stores", 
+        las = 1, #forcing the axes to have text in the horizontal directions to be more readable
+        horizontal = TRUE)
+```
+
+
+```{r}
+#summarizing sales of product 1 by country
+map.df <-
+  store.df %>%
+  select(country, p1sales) %>%
+  group_by(country) %>%
+  summarise(sum_p1_sales = sum(p1sales))
+#plotting sales by country on a world map
+p1sales.map <-
+  joinCountryData2Map(map.df,
+                      joinCode = "ISO2", #2 letter country code names
+                      nameJoinColumn = "country")
+mapCountryData(
+  p1sales.map,
+  nameColumnToPlot = "sum_p1_sales",
+  mapTitle = "Total P1 sales by Country",
+  colourPalette = brewer.pal(7, "Greens"),
+  catMethod = "fixedWidth",
+  addLegend = FALSE
+)
+
+```
+
+```{r}
+cust.df <- read.csv("http://goo.gl/PmPkaG")
+
+```
+
+
+```{r}
+
+
+```
+
+
+```{r}
+
+
+```
+
+
+```{r}
+
+
+```
+
+
+```{r}
+
+
+```
+
+
+```{r}
+
+
+```
+
+
+```{r}
+
+
+```
+
+
+```{r}
+
+
+```
+
+
+```{r}
+
+
+```
+
+
+```{r}
+
+
+```
+
+
+```{r}
+
+
+```
+
+
+```{r}
+
+
+```
+
+
+```{r}
+
+
+```
+
+
+```{r}
+
+
+```
+
+
+```{r}
+
+
+```
+
+
+```{r}
+
+
+```
+
+
+```{r}
+
+
+```
+
+
+```{r}
+
+
+```
+
+
+```{r}
+
+
+```
+
+
+```{r}
+
+
+```
+
+
+```{r}
+
+
+```
+
+
+```{r}
+
+
+```
+
+
+```{r}
+
+
+```
+
+
+```{r}
+
+
+```
+
+
+```{r}
+
+
+```
+
+
+```{r}
+
+
+```
+
+
+```{r}
+
+
+```
+
+
+```{r}
+
+
+```
+
+
+```{r}
+
+
+```
+
+
+```{r}
+
+
+```
