@@ -1,0 +1,1071 @@
+y = (..count../sum(..count..))
+
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE, warning = TRUE, fig.showtext = T, fig.retina = 1)
+```
+
+Importing libraries that I'm interest in using for the analyses
+```{r prep_lib}
+library(tidyverse)
+library(lubridate)
+library(psych)
+library(stringr)
+library(magrittr)
+library(DataExplorer)
+library(gridExtra)
+library(pastecs)
+library(fastDummies)
+library(cluster)
+set.seed(767898)
+```
+
+I'm starting by setting my working directory to where my data are saved
+then reading in my data
+```{r data_readin}
+df_pirate <- read_csv("~/Documents/data_science/data_science_practice/R/pirates_clustering/df_pirate.csv")
+```
+
+The first I like to do after importing my data, before basic EDA (exploratory data analysis), 
+if to look at the column names and see if their format is uniform and one the appeals to me
+```{r colnames_check}
+colnames(df_pirate)
+```
+
+I don't like these column names, because I tend to have a slightly hard time to
+take in at a glance names with no spaces, even if they're in camel case format the
+way that these names are. Therefore, I want to change the names. 
+I am overwriting the column names with a lowercase version of them (which is what
+the 'tolower' function does). However, before I can do that, I first add to 
+names that have a lowercase letter followed by a number (which, to be honest, is only
+Mission1 here) an underscore between the letter and the number, and then I add underscores
+in all names between lowercase and uppercase letters, before converting everything 
+to lowercase. 
+```{r colnames_overwrite}
+colnames(df_pirate) <- tolower(gsub(
+  "([a-z])([A-Z])",
+  "\\1_\\2",
+  gsub("([a-z])([1-9])", "\\1_\\2", colnames(df_pirate))
+))
+  
+colnames(df_pirate)
+```
+
+I then start examining the data by eyeballing the first 6 rows with the "head" function,
+specifying that I want 6 rows.
+nothing really jumps out at me just yet, except that I know that pirate_level 
+and crew are factors (since the numbers are not a 
+meaningful scale like temperature, and are actually a lot more like names and categories), 
+as well as that there are some NAs in my data
+```{r df_head}
+head(df_pirate, 6)
+```
+
+I next examine the structure of the columns.
+Nothing new jumps out at me here, although it is a good reminded that eventually we will 
+need to dummy code our non-continuous variables--which are our factor variables--
+like crew, and day_or_night. For example, if a variable is "likes cats" with 
+the levels "all cats", "some cats", "no cats", I can create 3 columns--3 new 
+variables--called "likes all cats", "likes no cats", "likes some cats", and 
+give each row (which represents a person) a 1 if it's true about them, and 0 
+if it isn't). We can then often run these columns through algorithms, since I 
+will have converted my words to numbers, and can now to math with them 
+```{r df_str}
+str(df_pirate)
+```
+
+To convert the factor variables to a factor data type I mutate them with the "as.factor"
+funtion, after specifying the variable names. 
+```{r factor_order_fix}
+df_pirate %<>%
+  mutate(across(c(crew, state, day_or_night, occupation, crewmember_died, pirate_level), as.factor))
+#examining the structure of the data to confirm that the data types have changed
+str(df_pirate)
+```
+
+I expect that there should only be one row per id, but I want to double check.
+I do so by only selecting the ids, grouping by them, counting how many rows I have
+per group, and selecting only the IDs that have more than a single ID.
+```{r rows_id_check}
+df_pirate %>%
+ dplyr::select(pirate_id) %>%
+  group_by(pirate_id) %>%
+  count() %>%
+ dplyr::filter(n > 1)
+```
+I see that I only have one case like that, where ID = 20000; it has 5 rows. 
+I want to examine those rows, to see whether they're just identical duplicates or something else
+
+```{r row_id_check}
+df_pirate %>%
+ dplyr::filter(pirate_id == 20000)
+```
+
+They're not perfect duplicates, so I have the option of either removing that ID
+completely from my dataset, or keeping only one of the rows of the ID and deleting 
+the 4 others. Since in this hypothetical scenatio I can't confirm which is the true row,
+and it is just a single person out of 8274, I am more comfortable 
+with introducing bias into my data by removing this one person than guessing which 
+parts of each row are accurate, since I can't find the ground truth to that question.
+To be honest, even if I could find the ground truth, if it wasn't very fast and
+easy to do so, I'd probably drop that row anyways given the size of the dataset,
+since my time is probably better spent elsewhere since the introduced bias by 
+deleting that row would probably be minimal.
+Therefore, I filter the data and only keep rows where pirate_id isn't 2000.
+```{r rows_id_remove}
+df_pirate <- 
+  df_pirate %>%
+   dplyr::filter(pirate_id != 20000)
+```
+
+I next examine which columns have NAs in them
+```{r}
+#looking at each column name
+for(c in colnames(df_pirate)){
+  #If it's true and there are inf value we print out that column's name
+  ifelse(
+    sapply(df_pirate[{c}], function(x) any(is.na(x))) == TRUE, 
+    print(glue::glue("Column {c} has NA values")), 
+    next
+    )
+}
+
+```
+
+As part of EDA I also want to eyeball the levels of the non-numeric/datetime features.
+To do so I apply the "unique" function to the factor variables to get the distinct levels.
+```{r eyeball_unique_levels}
+lapply(
+  (df_pirate %>%
+ dplyr::select_if(is.factor)), 
+  (function(x) unique(x))
+  )
+```
+
+I can see that there are NAs in all of them (which I already expected).
+Assuming that the levels that are countries other than the US in the state variable 
+are real, I still think that if we have enough data as a first step we should 
+focus only on volunteers from the US, since culture could impact folx's actions.
+Since I see that some state names are a number, I want to count how many faulty
+rows have a number instead of a state name.
+```{r count_digit_states}
+df_pirate %>%
+ dplyr::filter(str_detect(state, pattern = '[:digit:]')) %>%
+  count()
+```
+I can see that there is only one, so I'll probably dump it.
+I look to see how many columns have punctuation in them 
+```{r filter_state_punct}
+df_pirate %>%
+ dplyr::filter(str_detect(state, pattern = '[:punct:]')) 
+```
+There is only one row like that--which has u.s.a--as its state. Since I can't
+narrow that down further, like the number I will probably just remove it.
+I want to count how many rows have NA instead of a state name.
+```{r count_state_na}
+df_pirate %>%
+ dplyr::filter(is.na(state)) %>%
+  count()
+```
+There are 690 rows that have NA in the state column.
+If I had a bunch of time I might play around with creating a model to
+predict if and which state the NA belongs to.
+Seeing that it is a pretty small percent compared to the size of the data
+I don't feel worried about removing it,
+and, to be honest, considering the size of the data I'd probably prefer to avoid the bias of
+imputing incorrectly, and just delete the NAs.
+I start by filtering the data so that I only keep rows where the state variable
+doesn't have any punctuation or digits, and then run some sanity checks to 
+confirm that the new, filtered dataset, does not contain those state names.
+It will also drop all the NAs
+```{r}
+df_pirate_states_words <- 
+  df_pirate %>%
+ dplyr::filter(
+    (!str_detect(state, pattern = '[:punct:]|[:digit:]')))
+
+#sanity checks
+df_pirate_states_words %>%
+ dplyr::filter(str_detect(state, pattern = '[:punct:]')) %>%
+  count()
+
+df_pirate_states_words %>%
+ dplyr::filter(str_detect(state, pattern = '[:digit:]')) %>%
+  count() 
+
+df_pirate_states_words %>%
+ dplyr::filter(is.na(state)) %>%
+  count() 
+
+```
+
+To figure out which of the states to keep without too much manual labour, I'm first
+creating a list of all the states and their abbreviations
+```{r states_list}
+states <- "Alabama	AL
+Alaska	AK
+Arizona	AZ
+Arkansas	AR
+California	CA
+Colorado	CO
+Connecticut	CT
+Delaware	DE
+Florida	FL
+Georgia	GA
+Hawaii	HI
+Idaho	ID
+Illinois	IL
+Indiana	IN
+Iowa	IA
+Kansas	KS
+Kentucky	KY
+Louisiana	LA
+Maine	ME
+Maryland	MD
+Massachusetts	MA
+Michigan	MI
+Minnesota	MN
+Mississippi	MS
+Missouri	MO
+Montana	MT
+Nebraska	NE
+Nevada	NV
+New Hampshire	NH
+New Jersey	NJ
+New Mexico	NM
+New York	NY
+North Carolina	NC
+North Dakota	ND
+Ohio	OH
+Oklahoma	OK
+Oregon	OR
+Pennsylvania	PA
+Rhode Island	RI
+South Carolina	SC
+South Dakota	SD
+Tennessee	TN
+Texas	TX
+Utah	UT
+Vermont	VT
+Virginia	VA
+Washington	WA
+West Virginia	WV
+Wisconsin	WI
+Wyoming	WY
+District of Columbia	DC"
+```
+
+I next replace in the list all carriage returns, newlines, and tab characters with
+a whitespace, and then add commas before and after any part of list comprised of 
+exactly two capital letters.
+```{r states_list}
+states_str_cleaned <- 
+  gsub("([A-Z])([A-Z])", 
+       ",\\1\\2,", #adding commas before and after those two pattern matching 
+       #things we found
+       (gsub("[\r\n\t]", 
+             " ", 
+             states)))
+```
+
+I also strip the spaces before and after the commas, and make all letters lowercase
+with "str_to_lower" from the stringr library
+```{r states_list}
+states_str_cleaned <- 
+  str_to_lower(gsub(", ",
+       ",",
+       (gsub(" ,",
+             ",",
+             states_str_cleaned))))
+```
+
+Finally, I split the string on the commas, but save each element on its own.
+The "strsplit" function saves the splits of the string on the commas in a single
+element, so to save each of the elements as a separate element we need to use
+[[]]  to access that element when saving it to the list.
+```{r states_list}
+states_list <-
+  as.list(strsplit(states_str_cleaned, split = ",")[[1]])
+
+states_list
+
+```
+
+Next I filter the df based on whether the value in each cell in the states column values is in
+my list, and seeing how many rows I'll lose as a result
+```{r}
+df_pirate %>%
+  count() -
+  df_pirate %>%
+ dplyr::filter(state %in% states_list) %>%
+  count()
+```
+It looks like it's just 700 out of like 30k so it's really not a big deal
+to lose them
+
+I start with a couple of sanity checks to make sure that
+removing states by filtering through the list is doing 
+what I expect it to do, and that the output looks reasonable
+```{r eyeball_removed_kept_states}
+#looking at states in states list and state
+df_pirate %>%
+ dplyr::select(state) %>%
+ dplyr::filter(state %in% states_list) %>% 
+  distinct() %>% 
+  View()
+#looking as states only in state and not in list
+df_pirate %>%
+ dplyr::select(state) %>%
+ dplyr::filter(!state %in% states_list) %>% 
+  distinct() %>% 
+  View()
+```
+
+Since the output looked reasonble I'm going to filter states using my list
+```{r}
+df_pirate_states <- 
+  df_pirate %>%
+ dplyr::filter(state %in% states_list)
+```
+
+
+Since I want all the states to have the same format, and it seems like using actual hash tables in R can take a very long time to create
+(as per the internet), I won't do that (in python I'd use a dictionary as a hashtable)
+but will just create a table that has two columns
+of a key and table, and compare each state name and convert it into the value that 
+will be the abbreviation if it's in the full/key format
+```{r}
+states_str_cleaned2 <- 
+  gsub("([A-Z])([A-Z])", 
+       ",\\1\\2", #adding commas before and after those two pattern matching 
+       #things we found
+       (gsub("[\r\t]", 
+             " ", 
+             states)))
+#I'll also strip spaces before and after commas
+states_str_cleaned2 <- 
+  str_to_lower(gsub(", ",
+       ",",
+       (gsub(" ,",
+             ",",
+             states_str_cleaned2))))
+
+states_list2 <- as.list(strsplit((strsplit(states_str_cleaned2, split = "\n")[[1]]), split = ","))
+#so I now have two items in each part of the list 
+#kinda like a hashtable or dictionary in python
+df_states_list1 <- as.data.frame(states_list2)
+  #setting the dataframe columns to have the states' full names
+colnames(df_states_list1) <- df_states_list1[1,]
+#deleting the first row since those names are now the column names
+df_states_list1 <- df_states_list1[-1,]
+#converting dataframe format to long
+#with a key column that has the full state name, and value that's the abbreviation
+df_states_list2 <- 
+  gather(df_states_list1, "key", "value")
+
+```
+
+Using the dictionary table to modify the state column so that if the state
+appears as a key in the table, it's value is pulled, otherwise it's left alone 
+```{r}
+df_pirate_states$state <-
+  modify( #like map, but return the same type of data type going in
+ df_pirate_states$state, #the data we want the function to operate on
+  (function(x) #creating an anonymous function
+    ifelse( 
+      (x %in% df_states_list2$key), #if the state is in the df_states_list2 key column
+      (df_states_list2$value[ #pull the value with this index from df_states_list2
+        (which((df_states_list2$key == x))) #the index is the one where the key matches that full state name
+        ]), 
+      as.character(x) #if the state isn't in key column it means it's already abbreviated, so just keep that name
+    )))
+```
+
+A sanity check that everything worked as intended by eyeballing the values in state
+```{r}
+unique(df_pirate_states$state)
+```
+
+A second sanity check counting how many values I now have in the state column
+```{r distinct_states_sanity_check}
+df_pirate_states %>%dplyr::select(state) %>% distinct() %>% count() #51 because 50 + DC
+
+```
+
+Converting the values in the occupation column all to lower case
+```{r factor_var_names_change}
+df_pirate_states %<>%
+  mutate(occupation = tolower(occupation))
+
+```
+
+For my target--whether the pirate churned out of piracy--I am going to look at whether the last time a pirate went on a mission was more than 60 days ago. If the answer to that is yes, they will be considered churned. This means that I should also probably dump all the data from people who did not have their first mission at least 61 days ago, because I would need 60 days to pass in order to determine whether they churned. Additionally, if someone does not have a start or end date I have to remove them, since I cannot calculate whether or not they churned. While it is possible to use machine learning to determine the possible start and end date, I think that given that this is the target variable that would be introducing too much bias into our data, and I would not recommend doing it in this situation. I'll start by checking though how many rows I'd lose from dumping NAs
+```{r}
+(df_pirate_states %>%
+   count()) -
+  (df_pirate_states %>%
+     drop_na(mission_last, mission_1)  %>%
+     count())
+
+```
+
+It looks like I'd just lose 584 rows.
+First filtering out rows with NAs in either of the mission timestamp columns,
+and then filtering to keep only folx who don't have over 60 days between the date
+they had their first mission and the latest mission date in the dataset. I next
+create a new variable called "churned", where anyone with 61 or more days between
+the date of their last mission and the latest mission date in the dataset is marked as 
+churned, and everyone else marked as not churned. 
+```{r}
+df_pirate_eng <-
+  df_pirate_states %>%
+  drop_na(mission_last, mission_1) %>%
+  #is the time difference between anyone's most recent mission date and that person's first mission date over 60 days? If yes, keep them, because they will have had the time to churn
+  filter(as.integer(difftime(
+    max(mission_last, na.rm = TRUE), mission_1, units = "days"
+  )) >= 60) %>%
+  #is the time difference between anyone's most recent mission date and that person's most recent mission date over or equal to 60 days? If yes, it means we know that at least 60 days went by without that person going on a mission, which means they churned
+  mutate(churned =
+           as.factor(ifelse(
+             (as.double(round(
+               difftime(max(mission_last, na.rm = TRUE), mission_last, units = "days"), digits = 3
+             )) >= 61),
+             "churned",
+             "not_churned"
+           )))
+
+```
+Another EDA investigation related to data validity is whether the pirate levels 
+all align with what we would expect them to be. That is, we know that until a 
+pirate goes on 11 missions, they are level 1; from 11 to 30 missions they are 
+level 2; 31 to 50 missions they are level 3; 51 to 80 is level 4; 81 to 120 is 
+level 5; 121 + is level 6.
+
+To investigate this I will create a new column called level_matches_hours, and 
+if the pirate's level matches what I would expect based on the above--or if they 
+have no missions and are at level 0--I will populate this column with "match", 
+otherwise, I will populate the row in question with "no_match", and then investigate 
+those rows without a match by keeping only the no match rows:
+```{r lvl_check}
+df_pirate_lvlcheck <- 
+  df_pirate_eng %>%
+    mutate(level_matches_hours =
+             case_when(
+               ((.$mission_count <= 10 &
+                   .$pirate_level == 1) |
+                  ((.$mission_count > 10 &
+                      .$mission_count < 31) &
+                     .$pirate_level == 2) |
+                  ((.$mission_count > 30 &
+                      .$mission_count < 51) &
+                     .$pirate_level == 3) |
+                  ((.$mission_count > 50 &
+                      .$mission_count < 81) &
+                     .$pirate_level == 4) |
+                  ((.$mission_count > 80 &
+                      .$mission_count < 121) &
+                     .$pirate_level == 5
+                  ) |
+                  (.$mission_count > 120 &
+                     .$pirate_level == 6
+                  ) |
+                  (((.$mission_count == 0) |
+                      (
+                        is.na(.$mission_count) == TRUE
+                      )) &
+                     .$pirate_level == 0)
+               ) ~ "match",
+               TRUE ~ "no_match"
+             )) %>%
+   dplyr::filter(level_matches_hours == 'no_match')
+
+View(df_pirate_lvlcheck)
+
+```
+Eyeballing these data isn't really helpful.
+It would be more helpful to count how many mismatches I have at every level to
+know whether I should be worried about some sort of systematic bias.
+Looking at how the total count at each level compares to the count of mismatches
+that I will either have to impute or delete.
+```{r count_levels}
+left_join((df_pirate_eng %>%
+ dplyr::select(pirate_level) %>%
+  group_by(pirate_level) %>%
+  count()), 
+ (df_pirate_lvlcheck %>%
+ dplyr::select(pirate_level) %>%
+  group_by(pirate_level) %>%
+  count() %>%
+   rename(n_nomatches = n)))
+```
+So starting level 6 there are way less people that made it that far
+which is logical, but that's why 149 mismatched folxs here is kind of a bummer.
+But I'll probably dump them because I don't have the "resources" to contact my fake
+data science/engineering teams to see
+what that source of confusion might be, and I'd rather err in favor of the bias
+of dumping data than deciding which column is the true one. In real life I might try
+and run the model with and without the noisy data if I can't figure out which
+is the true value, because usually those are pretty similar and then it doesn't
+matter; but if they're really different than we have a problem and we need to 
+dig deeper. 
+I'm not even supposed to have a level 7, which means that it's as useless as NA, and should be deleted.
+Dumping the rows with the levels that don't match up.
+``` {r dump_wrong_level}
+df_pirate_eng %<>%
+ dplyr::filter(!pirate_id %in% df_pirate_lvlcheck$pirate_id) #filtering by keeping ids not in the mismatched df
+```
+
+Other types of features that I would want to examine as predictors include 
+the last month someone went on a mission, as well as descritized (i.e. converted into non-continuous, discrete categories) age. Ideally, 
+I'd take the time to plot everything and find what are meaningful cut off points 
+relative to everything else, but I'm just going with what I think is logical here 
+for brevity's sake. Finally, I want to examine for every week the person hadn't 
+yet churned, how many hours of missions, on average, did that person participate 
+in during that week, and how many hours each of their missions took.
+```{r}
+df_pirate_eng %<>%
+  mutate(
+    month_last_mission = as.factor(month(mission_last)),
+    age_groups = case_when(
+      age < 23 ~ "age_18_22",
+      (age > 22 &
+         age < 26) ~ "age_23_25",
+      (age > 25 &
+         age < 31) ~ "age_26_30",
+      (age > 30 &
+         age < 41) ~ "age_31_40",
+      (age > 40 &
+         age < 51) ~ "age_41_50",
+      (age > 50 &
+         age < 65) ~ "age_51_64",
+      (age > 64) ~ "age_65_plus"
+    ),
+    mission_hours_per_week = mission_hours / as.double(round(
+      difftime(mission_last, mission_1, units = "weeks"), digits = 3
+    )), #mean hours per week for each active week
+    hours_per_mission = mission_hours / mission_count #mean hours per mission
+  )
+
+```
+    
+Examining descriptive statistics of the numeric columns using the "describe" function
+in the psych library
+```{r}
+psych::describe((df_pirate_eng %>%
+                   select(where(is.numeric))),
+                na.rm = TRUE)
+```
+
+There seems be an infinity issue going on in mission_hours_per_week. Since that 
+feature was a engineered by dividing one number into another, and the numerator 
+could have been 0 (like if the first mission was also the last one), I'm guessing 
+this is where the issue arose, and therefore the infinity values should just be 
+automatically to 0 (although I could also see arguing in favor of the number being
+just whatever that missions hour count was). Therefore, I want to examine whether 
+the max values of those features is inf because the numerator--the difference in 
+days between the first and last mission--is 0. I can do this by looking at whether 
+infinity values of mission_hours_per_week occur when the active weeks, calculated 
+as the time difference between the first and last mission dates, is different 
+than 0, and count those. 
+```{r inf_mean_conv}
+df_pirate_eng %>%
+  mutate(active_weeks = as.double(round(
+      difftime(mission_last, mission_1, units = "weeks"), digits = 3
+    ))) %>%
+ dplyr::select(active_weeks, mission_hours_per_week) %>%
+ dplyr::filter((is.infinite(mission_hours_per_week) & 
+            active_weeks != 0)) %>%
+  count()
+
+```
+Since there are no cases like this is means that the reason the infinities occur 
+is that the numerator is 0.
+
+I actually want to quickly confirm that the one one column is the only ones with infinity 
+values, by writing a for-loop that goes column name by column name, and: 
+1) applies to each column an anonymous function, where it examines whether the column has any infinite values. If the column does have an infinite value the function's output is TRUE; otherwise it becomes a FALSE
+2) if the output equals TRUE it prints out that the column has infinite values
+3) skips printing anything if the val equals FALSE
+It looks like only the one expected columns has infinite values.
+
+```{r}
+#looking at each column name
+for(c in colnames(df_pirate_eng)){
+  #If it's true and there are inf value we print out that column's name
+  ifelse(
+    sapply(df_pirate_eng[{c}], function(x) any(is.infinite(x))) == TRUE, 
+    print(glue::glue("Column {c} has infinite values")), 
+    next
+    )
+}
+
+```
+
+Given what we know about why the infinity values occurred, I think it makes sense to convert them into 0s. To do this I use modify_if to limit myself to the numeric columns, and then apply an anonymous function to them where I search for infinite values, and if I find them I convert them to 0, otherwise I leave them as-is.
+As a sanity check, similar to above, I utilize a for-loop to apply the function examining whether there are any infinite values in each of the columns, and see that they are all false, and that there are no more infinite values.
+```{r}
+df_pirate_inf <-
+  df_pirate_eng %>% 
+  modify_if(is.numeric, 
+            function(x) ifelse(is.infinite(x), 0, x))
+
+for(c in colnames(df_pirate_eng)){
+  ifelse(
+    sapply(df_pirate_eng[{c}], function(x) any(is.infinite(x))) == TRUE, 
+    print(glue::glue("Column {c} has infinite values")), 
+    next
+    )
+}
+
+for(c in colnames(df_pirate_inf)){
+  ifelse(
+   sapply(df_pirate_eng[{c}], function(x) any(is.infinite(x))) == TRUE,
+  print(glue::glue("Column {c} has infinite values")),
+  print(glue::glue("Column {c} does NOT have infinite values")))
+}
+```
+
+One quick last check I have learned the hard way to do is to confirm that all columns have variance, and that they're not just a single value. I think it will be easier though if I first dummy code my categorical variables. To do so we take the variable (e.g. a variable is "likes cats", with the levels "all cats", "some cats", "no cats") with n levels, and then create n columns--n new variables--one per level (e.g. three new variables--called "likes all cats", "likes no cats", "likes some cats"), and give that row (which represents a person) a 1 if it's true about them, and 0 if it isn't. We could do this manually with case_when, but it is much easier to do it with the dummy_cols function from the fastDummies library. This keeps the original categorical column, and just tacks the dummy coded ones on at the end. Before dummy coding we first drop all the levels of the categorical values that have no cases. We can then examine how many levels each column has, and pull the ones that only have one level, which means that they have no variance. We can do this by creating an empty vector, and then running through the column names, counting how many unique values there were, and then adding that column name to the list if there are fewer than 2 unique values, and skipping if there are more than that. 
+First, though, I will drop the extra levels that are unused in the dataframe with the "droplevels" function.
+```{r}
+df_pirate_inf <- 
+  droplevels(df_pirate_inf)
+df_pirate_dum <- 
+  dummy_cols(df_pirate_inf)
+
+list1 <- c()
+for(x in colnames(df_pirate_dum)){
+  if(nrow(unique(df_pirate_dum[x])) < 2){
+    list1 <- c(list1, x)
+  }
+  else
+    next
+}
+list1
+```
+Since the list is null it seems that all variables have more than a single variable, and therefore have variability.
+
+I want to graphically examine NA percentages for the columns using the plot_missing function in the dataexplorer library. For the most part, it seems like really small percentages of the data are missing. In an ideal world I would run all the analyses first with the NAs removed, and then with them imputed in some way (at least if they are above a certain percentage), and compare the two results. I would expect the two results to be pretty similar. If they are not pretty similar I would worry that I either imputed the missing variables very badly, which means the result is wrong, or I imputed it correctly and the missing data represent some systemic bias among my pirates that I am not fully comprehending. Either way, it would be really hard to tease those apart, and I would have a hard time trusting my data. I always fear the unknown unknowns, and try and find ways to triangulate my findings. Since the NAs here are relatively few, imputing the missing data adds its own type of bias to the data, and this is just an exercise for educational purposes, I do not intend to impute the NAs.
+```{r}
+plot_missing(df_pirate_inf)
+```
+
+I am going to continue using the dataexplorer library, specifically to plot the categorical variables. I select all variables whose datatypes are either factor or character, and limit myself to a maximum of 60 limits. This means that I will keep the states variable, but lose the crew one, as it has more than 60 levels. This is also a very unsightly graph, and the states graph is so small that I really cannot tell what is going on there.
+```{r dataexplorer_facvars_barplot}
+options(repr.plot.width=26, repr.plot.height=26)
+plot_bar((df_pirate_inf %>%
+          dplyr::select_if(
+             funs(is.factor(.) | is.character(.)
+                  )
+             )), maxcat = 60
+         )
+#i forgot how ugly this was
+```
+
+I do want to look at the state and crew features with greater detail, but I also want to look at the other variables by churn, because I think that can start to give me an idea of what features might be important to differentiate between pirates who did and did not churn. I start by creating a plotting function that requires me to enter a column named to plot, whether I want to plot those who did or did not churn, and the degree to which I want the labels on the x axis rotated (which will be here either 40 or 90). I do not want to get into a deep discussion here of what the enquo function does, but a short version is that it prevents the evaluation of the argument, and so instead of the variable being equal to its value, it becomes the expression that describes how to make the value, like a blueprint. Here I am diffusing the column name that I want to plot. When giving ggplot the data that I want plotted I filter it to keep only the provided churn status, and then select only the column of interest. I use the double exclamation mark to unquote the stored column name; that is, to undo the diffusion and take it from a blueprint back to a value. Since I want to use the column on the x axis, I unquote it there as well. I highlight that I want to dodge the position of objects so that they do not overlap, and choose my colors. For the y axis I specify that I want a special variable, which is why I have a double period around it. Specifically, I want to count the number of occurrences of each of the categories on the x axis. The notation (..count..) is also equivalent to stat(count). I also want a title where I pipe in the churned status (hence the curly brackets, and the need to glue everything together), together with the word "plot". Finally, because I have so much text on the x axis when it is crowded, I specify that I want the labels slightly rotated, and adjusted vertically and horizontally.
+```{r dataexplorer_facvars_barplot}
+g_fac_fun <- function(cname, churned, rotation) {
+  cname <- enquo(cname)
+  ggplot(data = drop_na(
+    df_pirate_inf %>%
+      dplyr::filter(churned == !!churned) %>%
+      dplyr::select(!!cname)),
+  aes(x = !!cname)) +
+    geom_bar(position = "dodge",
+             color = "darkgreen",
+             fill = "darkblue",
+             aes(y = (..count..))) +
+    ggtitle(paste(glue::glue("{churned} plot"))) + 
+    theme(axis.text.x = element_text(angle = rotation, hjust = 0.5, vjust = 0.5))
+}
+
+g_fac_c_age <-
+  g_fac_fun(cname = age_groups, churned = "churned", rotation = 40)
+g_fac_nc_age <-
+  g_fac_fun(cname = age_groups, churned = "not_churned", rotation = 40)
+g_fac_c_time <-
+  g_fac_fun(cname = day_or_night, churned = "churned", rotation = 40)
+g_fac_nc_time <-
+  g_fac_fun(cname = day_or_night, churned = "not_churned", rotation = 40)
+g_fac_c_crew <-
+  g_fac_fun(cname = crew, churned = "churned", rotation = 90)
+g_fac_nc_crew <-
+  g_fac_fun(cname = crew, churned = "not_churned", rotation = 90)
+g_fac_c_occupation <-
+  g_fac_fun(cname = occupation, churned = "churned", rotation = 40)
+g_fac_nc_occupation <-
+  g_fac_fun(cname = occupation, churned = "not_churned", rotation = 40)
+g_fac_c_month <-
+  g_fac_fun(cname = month_last_mission, churned = "churned", rotation = 40)
+g_fac_nc_month <-
+  g_fac_fun(cname = month_last_mission, churned = "not_churned", rotation = 40)
+g_fac_c_die <-
+  g_fac_fun(cname = crewmember_died, churned = "churned", rotation = 40)
+g_fac_nc_die <-
+  g_fac_fun(cname = crewmember_died, churned = "not_churned", rotation = 40)
+g_fac_c_lvl <-
+  g_fac_fun(cname = pirate_level, churned = "churned", rotation = 40)
+g_fac_nc_lvl <-
+  g_fac_fun(cname = pirate_level, churned = "not_churned", rotation = 40)
+```
+
+After running the function for each of the categorical columns I want to put them together in a 4 X 3 grid, and do so using the grid.arrange function. I am not including the state plots, and will look at those separately. I can see the month of the last mission varies greatly between those who churned and did not. However, by definition anyone who did not churn will have had a mission in the last 30 days, so probably July, and possibly June or August, so this is not as helpful as I had hoped. 
+That being said, the plot of the months of the churned folx is probably worthwhile to look into, even if we do not want to use it in building a predictive model of any type.The day_or_night feature is the only other one that really jumps out at me, even though I know that the dead crewmember feature differs as well, as I created these fake data.It looks like a much larger proportion of folx who did not churn like going on night missions.
+```{r plot_cat_var_by_churn}
+#I'm going to give cohort their own plots
+grid.arrange(
+  g_fac_c_age,
+  g_fac_nc_age,
+  g_fac_c_time,
+  g_fac_nc_time,
+  g_fac_c_occupation,
+  g_fac_nc_occupation,
+  g_fac_c_month,
+  g_fac_nc_month,
+  g_fac_c_die,
+  g_fac_nc_die,
+  g_fac_c_lvl,
+  g_fac_nc_lvl,
+  nrow = 3,
+  ncol = 4
+)
+
+```
+
+Since crew names are indicative of start dates, it is logical that people who started more recently are least likely to churn. Interestingly, the churn across time doesn't vary that much. In reality it could still pay to look at the small differences, especially if we scale by crew size, and then see if something different between the crews could explain the differences, like if they had different managers.
+```{r}
+grid.arrange(g_fac_c_crew, g_fac_nc_crew, nrow= 2, ncol = 1)
+```
+
+I also want to look at the numeric plots for the churned and not churned. I create a dataframe to plot, where I choose the numeric columns other than the ID, as well as the churned outcome. 
+I first create a series of histogram plots for the folx who churned, with a plot for each feature, and the feature's values on the x axis. I then did the same for those who did not churn.
+```{r}
+df_g_num <- df_pirate_inf %>%
+  dplyr::select((where(is.numeric)), churned, -pirate_id)
+
+hist_churn <- df_g_num %>%
+  dplyr::filter(churned == 'churned') %>%
+  dplyr::select(-churned) %>%
+  gather() %>% #column name becomes a key and the value is still the value
+  ggplot(aes(value)) +
+  facet_wrap( ~ key, scales = "free") +
+  geom_histogram() +
+  ggtitle("churned")
+
+hist_notchurn <- df_g_num %>%
+  dplyr::filter(churned == 'not_churned') %>%
+  dplyr::select(-churned) %>%
+  gather() %>%
+  ggplot(aes(value)) +
+  facet_wrap( ~ key, scales = "free") +
+  geom_histogram() +
+  ggtitle("not churned")
+grid.arrange(hist_churn, hist_notchurn, nrow = 1, ncol = 2)
+
+```
+
+Since the above histograms are so skewed, if I use these features in an algorithm I will likely first take their log, so I will look at it here first by modifying the numeric variables before inputting them into the plot. I think it is beneficial for the variables that began with the word mission, but that is about it.
+```{r}
+df_g_num2 <- df_pirate_inf %>%
+  dplyr::select((where(is.numeric)), churned, -pirate_id) %>%
+  mutate_if(is.numeric, function(x) log(x + 1))
+
+hist_churn2 <- df_g_num2 %>%
+  dplyr::filter(churned == 'churned') %>%
+  dplyr::select(-churned) %>%
+  gather() %>% #column name becomes a key and the value is still the value
+  ggplot(aes(value)) +
+  facet_wrap( ~ key, scales = "free") +
+  geom_histogram() +
+  ggtitle("churned")
+
+hist_notchurn2 <- df_g_num2 %>%
+  dplyr::filter(churned == 'not_churned') %>%
+  dplyr::select(-churned) %>%
+  gather() %>%
+  ggplot(aes(value)) +
+  facet_wrap( ~ key, scales = "free") +
+  geom_histogram() +
+  ggtitle("not churned")
+grid.arrange(hist_churn2, hist_notchurn2, nrow = 1, ncol = 2)
+
+```
+
+Looking at the above two graphs, I'm wondering whether longer missions--specifically the longest ones that are taking 9+ hours--are possibly leading to burnouts and churn. because of the spread of the data in the Hours Per Mission feature, I'm going to create another feature like it, but dichotomized to be either less than 9 hours (represented as a 0), or more than 9 hours (represented as a 1). 
+Technically, the dichotomozied version will not have more information. However, by dichotomizing it, if the focus really is on the extreme end of the distribution, we might be removing noise, which would make it a more useful and predictive feature. One of the hardest jobs of data scientists is understanding the data at a level that will help us pick both logical and useful features, both conceptually--what the feature represent and means--as well as pragmatically--do I need to take the log of it before using it, or maybe dichotomizing it.
+```{r}
+df_pirate_dum %>%
+  dplyr::select(churned, hours_per_mission) %>% 
+  mutate(hours_per_mission = ifelse(hours_per_mission < 9, 0, 1)) %>%
+  ggplot(aes(hours_per_mission)) +
+  facet_wrap( ~ churned, scales = "free") +
+  geom_histogram() +
+  ggtitle("churned")
+```
+
+For the churned group, about 10% pirates had, on average, missions lasting 9+ hours.
+I'll add this as a feature to my dataset.
+```{r}
+df_pirate_inf %>%
+  dplyr::select(churned, hours_per_mission) %>% 
+  mutate(hours_per_mission = ifelse(hours_per_mission < 9, 0, 1)) %>%
+  group_by(churned) %>% 
+  #What percent of the group had, on average, missions lasting 9+ hours
+  summarise(percent_pirates_9plus_hpm = (sum(hours_per_mission, na.rm = TRUE) / n()) * 100)
+
+df_pirate_inf %<>%
+  mutate(hours_per_mission_dich = ifelse(hours_per_mission < 9, 0, 1))
+```
+
+I created this scatterplot to get a feel of the distribution of how many hours each pirate completed as a function of when they started.
+The distribution looks like what I'd expect insomuch as those who started earlier also clocked more hours. It's interesting to see that those who didn't churn have more hours, as evident by the different colors and shapes, which was also my guess based on the plots of the histograms. On the other hand, because those who churned had longer missions, despite what I expected based on the data, this does surprise me a little, although it's not that crazy to assume that burn out isn't always a function of overall hours, but of hours at a time.
+```{r}
+ggplot(data = (df_pirate_inf %>%
+                   dplyr::select(churned, mission_1, mission_hours)), aes(x = mission_1,
+               y = mission_hours)) +
+    geom_point(aes(color = churned, shape = churned, alpha = 0.5)) +
+  #Makes the background white
+    theme_bw() +
+    theme(axis.text.x = element_text(angle = 340, hjust = 0.5, vjust = 0.5))
+```
+
+This is similar to the above plot, though instead of plotting the amount of hours as a function of starting date, I plot what percent of the total hours of all the people starting on the same date is that person.
+It seems like at each date there are more churners with smaller percents, an that the size of this discrepency shifts over time. This is to be expected, since those who started earlier will have had a longer duration to churn during, so those who haven't churned probably put in a lot more hours if they haven't yet churned. 
+However, throughout we continue to see that the ratio of over 1% to under it is larger for those who haven't churned
+```{r}
+ggplot(data = (df_pirate_inf %>% 
+  group_by(mission_1) %>% 
+  mutate(mission_hours_p = (mission_hours/sum(mission_hours, na.rm = TRUE)) * 100) %>% 
+  ungroup() %>%
+  dplyr::select(churned, mission_1, mission_hours_p)), 
+       aes(x = mission_1,
+           y = mission_hours_p)) +
+    geom_point(aes(color = churned, shape = churned, alpha = 0.3)) +
+  #Makes the background white
+    theme_bw() +
+    theme(axis.text.x = element_text(angle = 340, hjust = 0.5, vjust = 0.5))
+```
+
+About 7.5% of pirates who churned, represent 1% or more of all pirating hours by pirates who started at the same date as them. On the other hand, among pirates who didn't churn, 16.5% represent 1% or more of all pirating hours by pirates who started at the same date as them. 
+I'll add this dichotomization of this feature to my dataset as well. 
+```{r}
+df_pirate_inf %>%
+  group_by(mission_1) %>% 
+  mutate(mission_hours_p = (mission_hours/sum(mission_hours, na.rm = TRUE)) * 100) %>% 
+  ungroup() %>%
+  dplyr::select(churned, mission_hours_p) %>% 
+  mutate(mission_hours_p = ifelse(mission_hours_p < 1, 0, 1)) %>%
+  group_by(churned) %>% 
+  #What percent of the group had, on average, missions lasting 9+ hours
+  summarise(mission_hours_p_dich = (sum(mission_hours_p, na.rm = TRUE) / n()) * 100)
+
+df_pirate_inf %<>%
+  group_by(mission_1) %>% 
+  mutate(mission_hours_p = (mission_hours/sum(mission_hours, na.rm = TRUE)) * 100) %>% 
+  ungroup() %>%
+  mutate(mission_hours_p = ifelse(mission_hours_p < 1, 0, 1))
+```
+
+In retrospect, the plots would be more useful if I plotted the churned and not churned in the same plot
+I'll plot them, and then glue them together with grid.arrange
+```{r}
+overlapping_histograms <- function(data, xaxis){
+  xaxis <- enquo(xaxis)
+  data %>%
+    dplyr::select(churned, !!xaxis) %>%
+    ggplot(aes(x = !!xaxis, y = ..count.., fill = churned, color = churned, alpha = 0.3)) +
+    theme_bw() +
+    geom_histogram()
+}
+
+#using the log for this one, since it's so not spread out
+pmission_hours_per_week <- overlapping_histograms(data = df_g_num2, xaxis = mission_hours_per_week)
+page <- overlapping_histograms(data = df_g_num, xaxis = age)
+phours_per_mission <- overlapping_histograms(data = df_g_num, xaxis = hours_per_mission)
+pcrew_satisfaction_avg <- overlapping_histograms(data = df_g_num, xaxis = crew_satisfaction_avg)
+pmission_count <- overlapping_histograms(data = df_g_num, xaxis = mission_count)
+pmission_hours <- overlapping_histograms(data = df_g_num, xaxis = mission_hours)
+
+grid.arrange(pmission_hours_per_week,
+             page,
+             phours_per_mission,
+             pcrew_satisfaction_avg,
+             pmission_count,
+             pmission_hours,
+             nrow = 2,
+             ncol = 3)
+```
+
+Same as above but with the discrete variables.
+Leaving out the crew variable, since it's acting pretty much the way I would expect it to if all I had there were time effects.
+```{r}
+overlapping_bars <- function(cname, rotation) {
+  cname <- enquo(cname)
+  ggplot(data = (df_pirate_inf %>%
+      dplyr::select(churned, !!cname)),
+  aes(x = !!cname, y = ..count.., fill = churned, color = churned, alpha = 0.3)) +
+    geom_bar() +
+    theme(axis.text.x = element_text(angle = rotation, hjust = 0.5, vjust = 0.5))
+}
+
+p_fac_age <-
+  overlapping_bars(cname = age_groups, rotation = 40)
+p_fac_time <-
+  overlapping_bars(cname = day_or_night, rotation = 40)
+p_fac_occupation <-
+  overlapping_bars(cname = occupation, rotation = 40)
+p_fac_month <-
+  overlapping_bars(cname = month_last_mission, rotation = 40)
+p_fac_die <-
+  overlapping_bars(cname = crewmember_died, rotation = 40)
+p_fac_lvl <-
+  overlapping_bars(cname = pirate_level, rotation = 40)
+p_fac_hours_per_mission_dich <-
+  overlapping_bars(cname = hours_per_mission_dich, rotation = 0)
+p_fac_mission_hours_p <-
+  overlapping_bars(cname = mission_hours_p, rotation = 0)
+p_fac_state <-
+  overlapping_bars(cname = state, rotation = 0)
+
+
+grid.arrange(grid.arrange(p_fac_age,
+p_fac_time,
+p_fac_occupation,
+p_fac_month,
+p_fac_die,
+p_fac_lvl,
+p_fac_hours_per_mission_dich,
+p_fac_mission_hours_p,
+nrow = 2),
+p_fac_state)
+```
+
+Removing pirate_id, crew, mission_1, mission_last, and month_last_mission because those don't make sense as predictive features, as discussed above, and then dummy coding.
+```{r}
+df_pirate_f <- droplevels(
+    df_pirate_inf %>%
+  dplyr::select(-pirate_id, 
+                -crew, 
+                -mission_1, 
+                -mission_last, 
+                -month_last_mission) %>%
+    mutate(pirate_level = as.ordered(pirate_level)))
+
+df_pirate_dums <- dummy_cols((droplevels(
+    df_pirate_inf %>%
+  dplyr::select(-pirate_id, 
+                -crew, 
+                -mission_1, 
+                -mission_last, 
+                -month_last_mission))),
+  remove_selected_columns = TRUE,
+  ignore_na = TRUE)
+
+```
+
+
+the main feature of daisy is its ability to handle other variable types as well (e.g. nominal, ordinal, (a)symmetric binary) even when different types occur in the same dataset.
+Gower Distance is a distance measure that can be used to calculate distance between two entity whose attribute has a mixed of categorical and numerical values.
+This makes it appropriate for datasets with numeric and categorical data like mine.
+First step is to analyze dissimilarity between observations in the data set using Gower distance, like with a dissimilarity matrix.
+```{r}
+#daisy requires labeling the facor data as such
+df_cluster <- df_pirate_f %>% 
+  mutate_if(is.character, as.factor) %>%
+  mutate(hours_per_mission_dich = as.factor(hours_per_mission_dich), 
+         mission_hours_p = as.factor(mission_hours_p))
+
+gower_dissimilarity <- 
+  daisy(df_cluster, metric = c("gower"))
+
+gower_dissimilarity
+```
+
+
+one way to assess clustering is evaluating compactness and separation with the 
+Silhouette method: as a measure of data consistency, the silhouette plot displays 
+a measure of how close each point in one cluster is to points in the neighboring clusters.
+We can't use kmeans because we created a distance matrix which it doesn't
+accept as an input.
+partitioning around medians (PAM), which has the same algorithmic steps as 
+k-means but uses the median rather than the mean to determine the centroid; 
+making it more robust to outliers.
+```{r}
+
+sil_width <- c(NA)
+sil_width
+
+for(i in 2:15){  #going to examine 2 to 15 clusters
+  pam_fit <- pam(gower_dissimilarity, diss = TRUE, k = i)  #for 2 to 15 we'll compute the silhouette for that number
+  #diss = TRUE because x should be considered as a dissimilarity matrix
+  sil_width[i] <- pam_fit$silinfo$avg.width  #then insert into the empty variable at an index that is the k numbers the silhouette width
+}
+sil_width
+```
+
+```{r}
+
+
+```
+
+
+```{r}
+
+
+```
+
+
+```{r}
+
+
+```
+
+
+```{r}
+
+
+```
+
+
+```{r}
+
+
+```
+
+
+```{r}
+
+
+```
+
+
+```{r}
+
+
+```
+
+
+```{r}
+
+
+```
+
+
+```{r}
+
+
+```
+
+
+```{r}
+
+
+```
+
+
+```{r}
+
+
+```
+
